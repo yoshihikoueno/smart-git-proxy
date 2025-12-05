@@ -118,18 +118,10 @@ func (m *Mirror) markRequiresAuth(repoPath string) error {
 
 // validateAuth validates the auth token can access the upstream repo using git ls-remote.
 func (m *Mirror) validateAuth(ctx context.Context, upstreamURL, authHeader string) error {
-	args := []string{"ls-remote", "--exit-code", "-q"}
-	if authHeader != "" {
-		args = append(args, "-c", fmt.Sprintf("http.extraheader=Authorization: %s", authHeader))
-	}
-	args = append(args, upstreamURL, "HEAD")
+	args := []string{"ls-remote", "--exit-code", "-q", upstreamURL, "HEAD"}
 
 	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = append(os.Environ(),
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_CONFIG_SYSTEM=/dev/null",
-	)
+	cmd.Env = gitEnv(authHeader)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -147,21 +139,10 @@ func (m *Mirror) cloneRepo(ctx context.Context, repoPath, upstreamURL, authHeade
 		return fmt.Errorf("create parent dir: %w", err)
 	}
 
-	// Build git command with optional auth
-	args := []string{"clone", "--bare", "--mirror"}
-	if authHeader != "" {
-		args = append(args, "-c", fmt.Sprintf("http.extraheader=Authorization: %s", authHeader))
-	}
-	args = append(args, upstreamURL, repoPath)
+	args := []string{"clone", "--bare", "--mirror", upstreamURL, repoPath}
 
 	cmd := exec.CommandContext(ctx, "git", args...)
-	// Ignore global/system git config to avoid URL rewrite loops
-	// (e.g., when user has insteadOf rules that would redirect back to us)
-	cmd.Env = append(os.Environ(),
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_CONFIG_SYSTEM=/dev/null",
-	)
+	cmd.Env = gitEnv(authHeader)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git clone failed: %w\noutput: %s", err, output)
@@ -182,20 +163,10 @@ func (m *Mirror) cloneRepo(ctx context.Context, repoPath, upstreamURL, authHeade
 func (m *Mirror) syncRepo(ctx context.Context, repoPath, upstreamURL, authHeader string) error {
 	m.log.Debug("syncing mirror", "path", repoPath, "hasAuth", authHeader != "")
 
-	// Build git command with optional auth
-	args := []string{"-C", repoPath}
-	if authHeader != "" {
-		args = append(args, "-c", fmt.Sprintf("http.extraheader=Authorization: %s", authHeader))
-	}
-	args = append(args, "fetch", "--all", "--prune", "--force")
+	args := []string{"-C", repoPath, "fetch", "--all", "--prune", "--force"}
 
 	cmd := exec.CommandContext(ctx, "git", args...)
-	// Ignore global/system git config to avoid URL rewrite loops
-	cmd.Env = append(os.Environ(),
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_CONFIG_SYSTEM=/dev/null",
-	)
+	cmd.Env = gitEnv(authHeader)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git fetch failed: %w\noutput: %s", err, output)
@@ -210,4 +181,22 @@ func (m *Mirror) GetRepoLock(host, owner, repo string) *sync.Mutex {
 	key := fmt.Sprintf("%s/%s/%s", host, owner, repo)
 	lock, _ := m.repoLocks.LoadOrStore(key, &sync.Mutex{})
 	return lock.(*sync.Mutex)
+}
+
+// gitEnv returns environment variables for git commands.
+// Uses GIT_CONFIG_* env vars to pass auth without persisting to repo config.
+func gitEnv(authHeader string) []string {
+	env := append(os.Environ(),
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
+	)
+	if authHeader != "" {
+		env = append(env,
+			"GIT_CONFIG_COUNT=1",
+			"GIT_CONFIG_KEY_0=http.extraheader",
+			fmt.Sprintf("GIT_CONFIG_VALUE_0=Authorization: %s", authHeader),
+		)
+	}
+	return env
 }
