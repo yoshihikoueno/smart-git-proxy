@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -19,27 +20,46 @@ func ServeInfoRefs(w http.ResponseWriter, r *http.Request, repoPath string, cach
 		return fmt.Errorf("unsupported service: %s", service)
 	}
 
-	w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+	// Check for Git protocol version
+	gitProtocol := r.Header.Get("Git-Protocol")
+	isV2 := strings.Contains(gitProtocol, "version=2")
+
+	if isV2 {
+		w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+	} else {
+		w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+	}
 	w.Header().Set("Cache-Control", "no-cache")
 	if cacheStatus != "" {
 		w.Header().Set("X-Git-Proxy-Status", cacheStatus)
 	}
 	w.WriteHeader(http.StatusOK)
 
-	// Write pkt-line service announcement
-	// Format: 4-digit hex length + "# service=git-upload-pack\n" + flush
-	announcement := "# service=git-upload-pack\n"
-	pktLine := fmt.Sprintf("%04x%s", len(announcement)+4, announcement)
-	if _, err := w.Write([]byte(pktLine)); err != nil {
-		return err
-	}
-	// Flush packet (0000)
-	if _, err := w.Write([]byte("0000")); err != nil {
-		return err
+	// For protocol v1, write the service announcement
+	// Protocol v2 doesn't need this prefix
+	if !isV2 {
+		// Write pkt-line service announcement
+		// Format: 4-digit hex length + "# service=git-upload-pack\n" + flush
+		announcement := "# service=git-upload-pack\n"
+		pktLine := fmt.Sprintf("%04x%s", len(announcement)+4, announcement)
+		if _, err := w.Write([]byte(pktLine)); err != nil {
+			return err
+		}
+		// Flush packet (0000)
+		if _, err := w.Write([]byte("0000")); err != nil {
+			return err
+		}
 	}
 
 	// Run git upload-pack to get refs
 	cmd := exec.CommandContext(r.Context(), "git", "upload-pack", "--stateless-rpc", "--advertise-refs", repoPath)
+
+	// Pass Git protocol version via environment
+	cmd.Env = os.Environ()
+	if gitProtocol != "" {
+		cmd.Env = append(cmd.Env, "GIT_PROTOCOL="+gitProtocol)
+	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("stdout pipe: %w", err)
@@ -86,6 +106,13 @@ func ServeUploadPack(w http.ResponseWriter, r *http.Request, repoPath string, ca
 
 	cmd := exec.CommandContext(r.Context(), "git", "upload-pack", "--stateless-rpc", repoPath)
 	cmd.Stdin = body
+
+	// Pass Git protocol version via environment
+	gitProtocol := r.Header.Get("Git-Protocol")
+	cmd.Env = os.Environ()
+	if gitProtocol != "" {
+		cmd.Env = append(cmd.Env, "GIT_PROTOCOL="+gitProtocol)
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
