@@ -7,15 +7,11 @@ Wants=network-online.target
 Type=simple
 User=gitproxy
 Group=gitproxy
-WorkingDirectory=/home/gitproxy/smart-git-proxy
 EnvironmentFile=/etc/smart-git-proxy/env
-ExecStart=/home/gitproxy/smart-git-proxy/bin/smart-git-proxy --listen-addr=:8080
+ExecStart=/usr/bin/smart-git-proxy
 Restart=on-failure
 RestartSec=2
 LimitNOFILE=65535
-
-# Ensure mirror dir exists on NVMe (e.g., /mnt/git-mirrors) before start
-# RuntimeDirectory=git-proxy
 
 [Install]
 WantedBy=multi-user.target

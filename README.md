@@ -6,6 +6,19 @@ HTTP smart Git mirror proxy for `git fetch`/`git clone` over smart HTTP. Maintai
 
 Download pre-built binaries from [Releases](https://github.com/runs-on/smart-git-proxy/releases).
 
+### Debian/Ubuntu (.deb)
+```bash
+# Download and install (auto-creates gitproxy user, enables systemd service)
+curl -LO https://github.com/runs-on/smart-git-proxy/releases/latest/download/smart-git-proxy_<version>_linux_amd64.deb
+sudo dpkg -i smart-git-proxy_*.deb
+
+# Edit config
+sudo vi /etc/smart-git-proxy/env
+
+# Restart to apply changes
+sudo systemctl restart smart-git-proxy
+```
+
 ## How it works
 
 1. Client requests `info/refs` via proxy → proxy creates/syncs a bare mirror from upstream
@@ -74,10 +87,13 @@ git -c url."http://localhost:8080/github.com/".insteadOf="https://github.com/" \
     ls-remote https://github.com/runs-on/runs-on
 ```
 
-## systemd deployment (EC2)
+## systemd deployment
+
+The `.deb` package automatically installs and starts the systemd service. For manual setup:
 - Unit file: `scripts/smart-git-proxy.service`
-- Example env file: `scripts/env.example` (set `MIRROR_DIR` to NVMe mount like `/mnt/git-mirrors`)
-- Enable: `sudo systemctl enable --now smart-git-proxy`
+- Example env file: `scripts/env.example`
+- Config location: `/etc/smart-git-proxy/env`
+- Default mirror dir: `/var/lib/gitproxy/mirrors` (override with `MIRROR_DIR` for NVMe)
 
 ## Configuration
 

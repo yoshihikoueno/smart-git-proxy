@@ -26,6 +26,28 @@ archives:
   - format: tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
+nfpms:
+  - id: deb
+    package_name: smart-git-proxy
+    vendor: RunsOn
+    homepage: https://github.com/runs-on/smart-git-proxy
+    maintainer: Cyril Rohr <cyril.rohr@gmail.com>
+    description: HTTP smart Git mirror proxy for git fetch/clone
+    license: MIT
+    formats:
+      - deb
+    bindir: /usr/bin
+    contents:
+      - src: scripts/smart-git-proxy.service
+        dst: /lib/systemd/system/smart-git-proxy.service
+      - src: scripts/env.example
+        dst: /etc/smart-git-proxy/env
+        type: config|noreplace
+    scripts:
+      postinstall: scripts/postinstall.sh
+      preremove: scripts/preremove.sh
+      postremove: scripts/postremove.sh
+
 checksum:
   name_template: "checksums.txt"
 
