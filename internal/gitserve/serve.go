@@ -24,11 +24,7 @@ func ServeInfoRefs(w http.ResponseWriter, r *http.Request, repoPath string, cach
 	gitProtocol := r.Header.Get("Git-Protocol")
 	isV2 := strings.Contains(gitProtocol, "version=2")
 
-	if isV2 {
-		w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
-	} else {
-		w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
-	}
+	w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
 	w.Header().Set("Cache-Control", "no-cache")
 	if cacheStatus != "" {
 		w.Header().Set("X-Git-Proxy-Status", cacheStatus)
@@ -53,12 +49,7 @@ func ServeInfoRefs(w http.ResponseWriter, r *http.Request, repoPath string, cach
 
 	// Run git upload-pack to get refs
 	cmd := exec.CommandContext(r.Context(), "git", "upload-pack", "--stateless-rpc", "--advertise-refs", repoPath)
-
-	// Pass Git protocol version via environment
-	cmd.Env = os.Environ()
-	if gitProtocol != "" {
-		cmd.Env = append(cmd.Env, "GIT_PROTOCOL="+gitProtocol)
-	}
+	cmd.Env = gitEnv(gitProtocol)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -106,13 +97,7 @@ func ServeUploadPack(w http.ResponseWriter, r *http.Request, repoPath string, ca
 
 	cmd := exec.CommandContext(r.Context(), "git", "upload-pack", "--stateless-rpc", repoPath)
 	cmd.Stdin = body
-
-	// Pass Git protocol version via environment
-	gitProtocol := r.Header.Get("Git-Protocol")
-	cmd.Env = os.Environ()
-	if gitProtocol != "" {
-		cmd.Env = append(cmd.Env, "GIT_PROTOCOL="+gitProtocol)
-	}
+	cmd.Env = gitEnv(r.Header.Get("Git-Protocol"))
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -137,4 +122,18 @@ func ServeUploadPack(w http.ResponseWriter, r *http.Request, repoPath string, ca
 	}
 
 	return nil
+}
+
+// gitEnv returns a minimal environment for local git commands.
+// Isolates from user/system git config to avoid interference.
+func gitEnv(gitProtocol string) []string {
+	env := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
+	}
+	if gitProtocol != "" {
+		env = append(env, "GIT_PROTOCOL="+gitProtocol)
+	}
+	return env
 }
