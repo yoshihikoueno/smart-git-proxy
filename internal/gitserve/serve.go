@@ -1,11 +1,13 @@
 package gitserve
 
 import (
-	"bufio"
+	"bytes"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"net/http"
 	"os/exec"
+	"strings"
 )
 
 // ServeInfoRefs handles GET /info/refs?service=git-upload-pack
@@ -39,6 +41,8 @@ func ServeInfoRefs(w http.ResponseWriter, r *http.Request, repoPath string) erro
 	if err != nil {
 		return fmt.Errorf("stdout pipe: %w", err)
 	}
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start git upload-pack: %w", err)
@@ -51,7 +55,7 @@ func ServeInfoRefs(w http.ResponseWriter, r *http.Request, repoPath string) erro
 	}
 
 	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("wait git upload-pack: %w", err)
+		return fmt.Errorf("wait git upload-pack: %w, stderr: %s", err, stderrBuf.String())
 	}
 
 	return nil
@@ -63,41 +67,41 @@ func ServeUploadPack(w http.ResponseWriter, r *http.Request, repoPath string) er
 	w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
 	w.Header().Set("Cache-Control", "no-cache")
 
+	// Handle gzip-compressed request body
+	var body io.Reader = r.Body
+	if strings.Contains(r.Header.Get("Content-Encoding"), "gzip") {
+		gz, err := gzip.NewReader(r.Body)
+		if err != nil {
+			return fmt.Errorf("gzip reader: %w", err)
+		}
+		defer gz.Close()
+		body = gz
+	}
+
 	cmd := exec.CommandContext(r.Context(), "git", "upload-pack", "--stateless-rpc", repoPath)
-	cmd.Stdin = r.Body
+	cmd.Stdin = body
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("stdout pipe: %w", err)
 	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("stderr pipe: %w", err)
-	}
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start git upload-pack: %w", err)
 	}
 
-	// Read stderr in background for logging
-	go func() {
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			// Could log stderr here if needed
-		}
-	}()
-
 	// Stream stdout to response
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, stdout); err != nil {
 		_ = cmd.Wait()
-		return fmt.Errorf("copy stdout: %w", err)
+		return fmt.Errorf("copy stdout: %w, stderr: %s", err, stderrBuf.String())
 	}
 
 	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("wait git upload-pack: %w", err)
+		return fmt.Errorf("wait git upload-pack: %w, stderr: %s", err, stderrBuf.String())
 	}
 
 	return nil
 }
-
