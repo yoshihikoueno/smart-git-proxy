@@ -1,6 +1,6 @@
 # smart-git-proxy
 
-HTTP(S) smart Git caching proxy for `git fetch`/`git clone` over smart HTTP. Designed to run inside a trusted VPC; plain HTTP listener by default, TLS optional if you front it with a load balancer.
+HTTP(S) smart Git caching proxy for `git fetch`/`git clone` over smart HTTP. Designed to run inside a trusted VPC; plain HTTP listener by default.
 
 ## Prereqs
 - Go 1.25+ (toolchain pinned in `go.mod`; `.mise.toml` can install Go for you)
