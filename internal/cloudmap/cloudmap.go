@@ -86,7 +86,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	output, err := m.client.RegisterInstance(ctx, &servicediscovery.RegisterInstanceInput{
 		ServiceId:        aws.String(m.serviceID),
 		InstanceId:       aws.String(m.instanceID),
-		CreatorRequestId: aws.String(m.instanceID),
+		CreatorRequestId: aws.String(time.Now().Format(time.RFC3339)),
 		Attributes: map[string]string{
 			"AWS_INSTANCE_IPV4":      m.privateIP,
 			"AWS_INIT_HEALTH_STATUS": string(sdtypes.CustomHealthStatusUnhealthy),
