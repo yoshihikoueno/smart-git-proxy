@@ -172,8 +172,13 @@ Resources:
                 # Restart service to pick up Route53 config
                 systemctl restart smart-git-proxy
 
-                # Wait for service to register
-                sleep 5
+                # Wait for service to be healthy
+                for i in {1..20}; do
+                  curl -sf http://localhost:8080/healthz && break
+                  echo "Waiting for healthz... ($i/20)"
+                  sleep 1
+                done
+                curl -sf http://localhost:8080/healthz
 
                 # Signal ASG that launch is complete
                 /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
@@ -188,10 +193,10 @@ Resources:
         LaunchTemplateId: !Ref LaunchTemplate
         Version: !GetAtt LaunchTemplate.LatestVersionNumber
       MinSize: 1
-      MaxSize: 1
+      MaxSize: 2
       DesiredCapacity: 1
       HealthCheckType: EC2
-      HealthCheckGracePeriod: 300
+      HealthCheckGracePeriod: 30
       LifecycleHookSpecificationList:
         - LifecycleTransition: autoscaling:EC2_INSTANCE_TERMINATING
           LifecycleHookName: DeregisterFromRoute53
@@ -204,12 +209,12 @@ Resources:
     CreationPolicy:
       ResourceSignal:
         Count: 1
-        Timeout: PT5M
+        Timeout: PT2M
     UpdatePolicy:
       AutoScalingRollingUpdate:
-        MinInstancesInService: 0
+        MinInstancesInService: 1
         MaxBatchSize: 1
-        PauseTime: PT5M
+        PauseTime: PT2M
         WaitOnResourceSignals: true
 
   # Lambda to handle deregistration on termination
