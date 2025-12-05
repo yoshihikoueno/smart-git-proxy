@@ -2,6 +2,10 @@
 
 HTTP smart Git mirror proxy for `git fetch`/`git clone` over smart HTTP. Maintains local bare repo mirrors to serve multiple clients efficiently. Designed to run inside a trusted VPC; plain HTTP listener by default.
 
+## Installation
+
+Download pre-built binaries from [Releases](https://github.com/runs-on/smart-git-proxy/releases).
+
 ## How it works
 
 1. Client requests `info/refs` via proxy → proxy creates/syncs a bare mirror from upstream
