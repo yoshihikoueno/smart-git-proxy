@@ -37,10 +37,10 @@ Parameters:
     Description: Assign public IP (set to true for public subnets)
   InstanceType:
     Type: String
-    Default: t4g.micro
+    Default: m8gd.large
     AllowedPattern: ^[a-z][0-9]+g[a-z]*\.[a-z0-9]+$
-    ConstraintDescription: Must be a Graviton instance type (e.g., t4g.micro, c7gd.large, m7g.medium)
-    Description: EC2 instance type (use c7gd/m7gd for ARM with NVMe instance store)
+    ConstraintDescription: Must be a Graviton instance type (e.g., t4g.micro, c7gd.large, m7g.medium).
+    Description: EC2 instance type (use m8gd for ARM with NVMe instance store). If many parallel clones are expected, use a larger instance type with more CPU and memory.
   RootVolumeSize:
     Type: Number
     Default: 30
