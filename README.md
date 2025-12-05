@@ -3,7 +3,7 @@
 HTTP(S) smart Git caching proxy for `git fetch`/`git clone` over smart HTTP. Designed to run inside a trusted VPC; plain HTTP listener by default, TLS optional if you front it with a load balancer.
 
 ## Prereqs
-- Go 1.23+ (toolchain pinned to 1.23.4 in `go.mod`; `.mise.toml` can install Go for you)
+- Go 1.25+ (toolchain pinned in `go.mod`; `.mise.toml` can install Go for you)
 - `mise` for toolchain setup
 
 ## Install tooling
@@ -41,11 +41,11 @@ This proxy is not a generic CONNECT proxy; it expects direct smart-HTTP paths so
 ### Quick test (no auth)
 Repository: `https://github.com/runs-on/runs-on`
 ```bash
-# point Git to the proxy by rewriting URLs
-git -c url."http://localhost:8080/https://github.com/".insteadOf="https://github.com/" \
-    ls-remote https://github.com/runs-on/runs-on
+# Option 1: Simple rewrite (relies on UPSTREAM_BASE config)
+git -c url."http://localhost:8080/".insteadOf="https://github.com/" \
+    clone https://github.com/runs-on/runs-on /tmp/runs-on
 
-# or clone
+# Option 2: Full URL in path (works with any upstream)
 git -c url."http://localhost:8080/https://github.com/".insteadOf="https://github.com/" \
     clone https://github.com/runs-on/runs-on /tmp/runs-on
 ```

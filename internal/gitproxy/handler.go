@@ -36,12 +36,16 @@ func New(cfg *config.Config, cache *cache.Cache, up *upstream.Client, log *slog.
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		s.log.Debug("incoming request", "method", r.Method, "path", r.URL.Path, "query", r.URL.RawQuery)
+
 		targetURL, repo, kind, err := s.resolveTarget(r)
 		if err != nil {
+			s.log.Error("resolve target failed", "err", err, "path", r.URL.Path)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
+		s.log.Debug("resolved target", "targetURL", targetURL, "repo", repo, "kind", kind)
 		s.metrics.RequestsTotal.WithLabelValues(repo, string(kind), r.RemoteAddr).Inc()
 
 		switch kind {
@@ -135,12 +139,22 @@ func (s *Server) handleUploadPack(w http.ResponseWriter, r *http.Request, target
 	s.metrics.CacheMisses.WithLabelValues(repo, string(cache.KindPack)).Inc()
 
 	headers := s.forwardHeaders(r, false)
+	s.log.Debug("upload-pack request", "url", targetURL, "bodyLen", len(bodyBytes))
 	resp, err := s.up.Do(r.Context(), http.MethodPost, targetURL, bytes.NewReader(bodyBytes), headers)
 	if err != nil {
 		s.fail(w, repo, cache.KindPack, err)
 		return
 	}
 	defer resp.Body.Close()
+	s.log.Debug("upload-pack response", "status", resp.StatusCode, "contentType", resp.Header.Get("Content-Type"))
+
+	// Log error response body for debugging
+	if resp.StatusCode >= 400 {
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		s.log.Error("upstream error response", "status", resp.StatusCode, "body", string(errBody))
+		// Create a new reader with the error body so it can still be streamed to client
+		resp.Body = io.NopCloser(io.MultiReader(bytes.NewReader(errBody), resp.Body))
+	}
 
 	if resp.ContentLength > 0 && s.cfg.MaxPackSizeBytes > 0 && resp.ContentLength > s.cfg.MaxPackSizeBytes {
 		http.Error(w, "upstream pack too large", http.StatusBadGateway)
@@ -180,7 +194,7 @@ func (s *Server) handleUploadPack(w http.ResponseWriter, r *http.Request, target
 
 func (s *Server) forwardHeaders(r *http.Request, isInfo bool) http.Header {
 	h := http.Header{}
-	forward := []string{"Git-Protocol", "User-Agent", "Accept"}
+	forward := []string{"Git-Protocol", "User-Agent", "Accept", "Content-Encoding", "Accept-Encoding"}
 	for _, k := range forward {
 		if v := r.Header.Values(k); len(v) > 0 {
 			for _, vv := range v {
@@ -205,6 +219,7 @@ func (s *Server) forwardHeaders(r *http.Request, isInfo bool) http.Header {
 		h.Set("Accept", "application/x-git-upload-pack-advertisement")
 	} else {
 		h.Set("Content-Type", "application/x-git-upload-pack-request")
+		h.Set("Accept", "application/x-git-upload-pack-result")
 	}
 	return h
 }
