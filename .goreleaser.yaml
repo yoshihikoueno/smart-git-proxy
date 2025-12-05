@@ -31,7 +31,7 @@ nfpms:
     package_name: smart-git-proxy
     vendor: RunsOn
     homepage: https://github.com/runs-on/smart-git-proxy
-    maintainer: Cyril Rohr <cyril.rohr@gmail.com>
+    maintainer: Cyril Rohr <hey@cyrilrohr.com>
     description: HTTP smart Git mirror proxy for git fetch/clone
     license: MIT
     formats:
