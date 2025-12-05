@@ -21,7 +21,9 @@ type Config struct {
 	StaticToken          string
 	MetricsPath          string
 	HealthPath           string
-	AWSCloudMapServiceID string // If set, register with AWS Cloud Map and send heartbeats
+	AWSCloudMapServiceID string // Deprecated: use Route53 instead
+	Route53HostedZoneID  string // If set, register with Route53 private hosted zone
+	Route53RecordName    string // DNS record name (e.g., proxy.example.internal)
 }
 
 func Load() (*Config, error) {
@@ -41,7 +43,9 @@ func LoadArgs(args []string) (*Config, error) {
 	fs.StringVar(&cfg.StaticToken, "static-token", envOrDefault("STATIC_TOKEN", ""), "static token used when auth-mode=static")
 	fs.StringVar(&cfg.MetricsPath, "metrics-path", envOrDefault("METRICS_PATH", "/metrics"), "path for Prometheus metrics")
 	fs.StringVar(&cfg.HealthPath, "health-path", envOrDefault("HEALTH_PATH", "/healthz"), "path for health checks")
-	fs.StringVar(&cfg.AWSCloudMapServiceID, "aws-cloud-map-service-id", envOrDefault("AWS_CLOUD_MAP_SERVICE_ID", ""), "AWS Cloud Map service ID for registration and health heartbeat")
+	fs.StringVar(&cfg.AWSCloudMapServiceID, "aws-cloud-map-service-id", envOrDefault("AWS_CLOUD_MAP_SERVICE_ID", ""), "Deprecated: use Route53 instead")
+	fs.StringVar(&cfg.Route53HostedZoneID, "route53-hosted-zone-id", envOrDefault("ROUTE53_HOSTED_ZONE_ID", ""), "Route53 private hosted zone ID for DNS registration")
+	fs.StringVar(&cfg.Route53RecordName, "route53-record-name", envOrDefault("ROUTE53_RECORD_NAME", ""), "DNS record name (e.g., proxy.example.internal)")
 
 	allowedUpstreamsStr := fs.String("allowed-upstreams", envOrDefault("ALLOWED_UPSTREAMS", "github.com"), "comma-separated list of allowed upstream hosts")
 	syncStaleAfterStr := fs.String("sync-stale-after", envOrDefault("SYNC_STALE_AFTER", "2s"), "sync mirror if older than this duration")

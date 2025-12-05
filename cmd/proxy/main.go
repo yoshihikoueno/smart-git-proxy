@@ -17,6 +17,7 @@ import (
 	"github.com/crohr/smart-git-proxy/internal/logging"
 	"github.com/crohr/smart-git-proxy/internal/metrics"
 	"github.com/crohr/smart-git-proxy/internal/mirror"
+	"github.com/crohr/smart-git-proxy/internal/route53"
 )
 
 func main() {
@@ -61,9 +62,23 @@ func main() {
 		}
 	}()
 
-	// AWS Cloud Map registration and heartbeat
+	// DNS registration (Route53 preferred, Cloud Map deprecated)
 	var cloudMapMgr *cloudmap.Manager
-	if cfg.AWSCloudMapServiceID != "" {
+	var route53Mgr *route53.Manager
+
+	if cfg.Route53HostedZoneID != "" && cfg.Route53RecordName != "" {
+		var err error
+		route53Mgr, err = route53.New(context.Background(), cfg.Route53HostedZoneID, cfg.Route53RecordName, logger)
+		if err != nil {
+			logger.Error("route53 init failed", "err", err)
+			os.Exit(1)
+		}
+		if err := route53Mgr.Register(context.Background()); err != nil {
+			logger.Error("route53 registration failed", "err", err)
+			os.Exit(1)
+		}
+	} else if cfg.AWSCloudMapServiceID != "" {
+		// Deprecated: Cloud Map support kept for backward compatibility
 		var err error
 		cloudMapMgr, err = cloudmap.New(context.Background(), cfg.AWSCloudMapServiceID, logger)
 		if err != nil {
@@ -83,7 +98,10 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	// Deregister from Cloud Map before shutting down HTTP server
+	// Deregister before shutting down HTTP server
+	if route53Mgr != nil {
+		_ = route53Mgr.Deregister(ctx)
+	}
 	if cloudMapMgr != nil {
 		cloudMapMgr.Stop(ctx)
 	}
