@@ -35,7 +35,7 @@ func LoadArgs(args []string) (*Config, error) {
 	fs.StringVar(&cfg.ListenAddr, "listen-addr", envOrDefault("LISTEN_ADDR", ":8080"), "HTTP listen address")
 	fs.StringVar(&cfg.MirrorDir, "mirror-dir", envOrDefault("MIRROR_DIR", "/mnt/git-mirrors"), "directory for bare git mirrors")
 	fs.StringVar(&cfg.LogLevel, "log-level", envOrDefault("LOG_LEVEL", "info"), "log level: debug,info,warn,error")
-	fs.StringVar(&cfg.AuthMode, "auth-mode", envOrDefault("AUTH_MODE", "none"), "auth mode: pass-through|static|none (for upstream sync)")
+	fs.StringVar(&cfg.AuthMode, "auth-mode", envOrDefault("AUTH_MODE", "pass-through"), "auth mode: pass-through|static|none (for upstream sync)")
 	fs.StringVar(&cfg.StaticToken, "static-token", envOrDefault("STATIC_TOKEN", ""), "static token used when auth-mode=static")
 	fs.StringVar(&cfg.MetricsPath, "metrics-path", envOrDefault("METRICS_PATH", "/metrics"), "path for Prometheus metrics")
 	fs.StringVar(&cfg.HealthPath, "health-path", envOrDefault("HEALTH_PATH", "/healthz"), "path for health checks")
