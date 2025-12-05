@@ -157,8 +157,8 @@ Resources:
             set -ex
             exec > >(tee /var/log/user-data.log) 2>&1
 
-            # Install dependencies for ephemeral storage setup (preinstall script needs these)
-            yum install -y mdadm xfsprogs nvme-cli
+            # Install dependencies (git is required, others for ephemeral storage setup)
+            yum install -y git mdadm xfsprogs nvme-cli
 
             # Install smart-git-proxy RPM
             VERSION="${ProxyVersion}"
