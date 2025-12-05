@@ -54,7 +54,7 @@ Resources:
   PrivateHostedZone:
     Type: AWS::Route53::HostedZone
     Properties:
-      Name: !Sub runs-on.internal
+      Name: runs-on.internal
       VPCs:
         - VPCId: !Ref VpcId
           VPCRegion: !Ref AWS::Region
@@ -150,31 +150,34 @@ Resources:
           HttpTokens: required
           HttpEndpoint: enabled
         UserData:
-          Fn::Base64: !Sub |
-            #!/bin/bash
-            set -ex
-            exec > >(tee /var/log/user-data.log) 2>&1
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                #!/bin/bash
+                set -ex
+                exec > >(tee /var/log/user-data.log) 2>&1
 
-            # Install dependencies (git is required, others for ephemeral storage setup)
-            yum install -y git mdadm xfsprogs nvme-cli
+                # Install dependencies (git is required, others for ephemeral storage setup)
+                yum install -y git mdadm xfsprogs nvme-cli
 
-            # Install smart-git-proxy RPM
-            VERSION="${!FindInMap [Config, Proxy, Version]}"
-            RPM_URL="https://github.com/runs-on/smart-git-proxy/releases/download/v$VERSION/smart-git-proxy_${!VERSION}_linux_arm64.rpm"
-            yum install -y "$RPM_URL"
+                # Install smart-git-proxy RPM
+                VERSION="${ProxyVersion}"
+                RPM_URL="https://github.com/runs-on/smart-git-proxy/releases/download/v$VERSION/smart-git-proxy_${!VERSION}_linux_arm64.rpm"
+                yum install -y "$RPM_URL"
 
-            # Configure smart-git-proxy with Route53 for DNS registration
-            echo "ROUTE53_HOSTED_ZONE_ID=${PrivateHostedZone}" >> /etc/smart-git-proxy/env
-            echo "ROUTE53_RECORD_NAME=smart-git-proxy.runs-on.internal" >> /etc/smart-git-proxy/env
+                # Configure smart-git-proxy with Route53 for DNS registration
+                echo "ROUTE53_HOSTED_ZONE_ID=${PrivateHostedZone}" >> /etc/smart-git-proxy/env
+                echo "ROUTE53_RECORD_NAME=smart-git-proxy.runs-on.internal" >> /etc/smart-git-proxy/env
 
-            # Restart service to pick up Route53 config
-            systemctl restart smart-git-proxy
+                # Restart service to pick up Route53 config
+                systemctl restart smart-git-proxy
 
-            # Wait for service to register
-            sleep 5
+                # Wait for service to register
+                sleep 5
 
-            # Signal ASG that launch is complete
-            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
+                # Signal ASG that launch is complete
+                /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
+              - ProxyVersion: !FindInMap [Config, Proxy, Version]
 
   # Auto Scaling Group
   AutoScalingGroup:
@@ -342,7 +345,7 @@ Resources:
 Outputs:
   ProxyDnsName:
     Description: DNS name for the proxy
-    Value: !Sub smart-git-proxy.runs-on.internal
+    Value: smart-git-proxy.runs-on.internal
   HostedZoneId:
     Description: Route53 private hosted zone ID
     Value: !Ref PrivateHostedZone

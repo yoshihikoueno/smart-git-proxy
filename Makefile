@@ -23,7 +23,7 @@ tidy:
 
 upload:
 	AWS_PROFILE=runs-on-releaser aws s3 cp cloudformation/smart-git-proxy.yaml s3://runs-on/cloudformation/smart-git-proxy.yaml
-	@echo "https://runs-on.s3.eu-west-1.amazonaws.com/cloudformation/smart-git-proxy.yaml"
+	@echo "https://runs-on.s3.eu-west-1.amazonaws.com/cloudformation/smart-git-proxy.yaml" | pbcopy
 
 deploy:
 ifndef VPC_ID
@@ -53,6 +53,7 @@ ifndef TAG
 endif
 	@echo "Bumping version to $(TAG)..."
 	sed -i '' 's/Version: "[^"]*"/Version: "$(TAG)"/' cloudformation/smart-git-proxy.yaml
+	cfn-lint cloudformation/smart-git-proxy.yaml
 	git add cloudformation/smart-git-proxy.yaml
 	git commit -m "Bump version to $(TAG)"
 	git tag -a "v$(TAG)" -m "Release $(TAG)"
