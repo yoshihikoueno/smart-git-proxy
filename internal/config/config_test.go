@@ -15,11 +15,11 @@ func TestDefaults(t *testing.T) {
 	if cfg.ListenAddr != ":8080" {
 		t.Fatalf("listen addr default mismatch: %s", cfg.ListenAddr)
 	}
-	if cfg.CacheDir == "" {
-		t.Fatalf("cache dir default empty")
+	if cfg.MirrorDir == "" {
+		t.Fatalf("mirror dir default empty")
 	}
-	if cfg.CacheSizeBytes <= 0 {
-		t.Fatalf("cache size default invalid: %d", cfg.CacheSizeBytes)
+	if cfg.SyncStaleAfter != 2*time.Second {
+		t.Fatalf("sync stale after default mismatch: %v", cfg.SyncStaleAfter)
 	}
 }
 
@@ -33,25 +33,21 @@ func TestStaticAuthRequiresToken(t *testing.T) {
 
 func TestEnvOverrides(t *testing.T) {
 	clearEnv(t)
-	t.Setenv("CACHE_SIZE_BYTES", "1GB")
+	t.Setenv("SYNC_STALE_AFTER", "5s")
 	cfg, err := LoadArgs([]string{})
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.CacheSizeBytes != 1_000_000_000 {
-		t.Fatalf("expected cache size override, got %d", cfg.CacheSizeBytes)
-	}
-	if cfg.RepackInterval != 6*time.Hour {
-		t.Fatalf("unexpected repack interval: %s", cfg.RepackInterval)
+	if cfg.SyncStaleAfter != 5*time.Second {
+		t.Fatalf("expected sync stale after override, got %v", cfg.SyncStaleAfter)
 	}
 }
 
 func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
-		"LISTEN_ADDR", "CACHE_DIR", "CACHE_SIZE_BYTES", "ALLOWED_UPSTREAMS", "LOG_LEVEL",
-		"AUTH_MODE", "STATIC_TOKEN", "REPACK_INTERVAL", "MAX_PACK_SIZE_BYTES",
-		"UPSTREAM_TIMEOUT",
+		"LISTEN_ADDR", "MIRROR_DIR", "SYNC_STALE_AFTER", "ALLOWED_UPSTREAMS", "LOG_LEVEL",
+		"AUTH_MODE", "STATIC_TOKEN",
 	} {
 		_ = os.Unsetenv(k)
 	}

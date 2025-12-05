@@ -1,5 +1,5 @@
 [Unit]
-Description=Smart Git HTTP caching proxy
+Description=Smart Git HTTP mirror proxy
 After=network-online.target
 Wants=network-online.target
 
@@ -14,9 +14,8 @@ Restart=on-failure
 RestartSec=2
 LimitNOFILE=65535
 
-# Ensure cache dir exists on NVMe (e.g., /mnt/git-cache) before start
+# Ensure mirror dir exists on NVMe (e.g., /mnt/git-mirrors) before start
 # RuntimeDirectory=git-proxy
 
 [Install]
 WantedBy=multi-user.target
-

@@ -5,8 +5,8 @@ go 1.25.0
 toolchain go1.25.1
 
 require (
-	github.com/dustin/go-humanize v1.0.1
 	github.com/prometheus/client_golang v1.23.2
+	golang.org/x/sync v0.18.0
 )
 
 require (

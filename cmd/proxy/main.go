@@ -11,12 +11,11 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/crohr/smart-git-proxy/internal/cache"
 	"github.com/crohr/smart-git-proxy/internal/config"
 	"github.com/crohr/smart-git-proxy/internal/gitproxy"
 	"github.com/crohr/smart-git-proxy/internal/logging"
 	"github.com/crohr/smart-git-proxy/internal/metrics"
-	"github.com/crohr/smart-git-proxy/internal/upstream"
+	"github.com/crohr/smart-git-proxy/internal/mirror"
 )
 
 func main() {
@@ -30,15 +29,14 @@ func main() {
 		log.Fatalf("logger init: %v", err)
 	}
 
-	cacheStore, err := cache.New(cfg.CacheDir, cfg.CacheSizeBytes, logger)
+	mirrorStore, err := mirror.New(cfg.MirrorDir, cfg.SyncStaleAfter, logger)
 	if err != nil {
-		logger.Error("cache init failed", "err", err)
+		logger.Error("mirror init failed", "err", err)
 		os.Exit(1)
 	}
 
 	metricsRegistry := metrics.New()
-	upClient := upstream.NewClient(cfg.UpstreamTimeout, cfg.AllowInsecureHTTP, cfg.UserAgent)
-	server := gitproxy.New(cfg, cacheStore, upClient, logger, metricsRegistry)
+	server := gitproxy.New(cfg, mirrorStore, logger, metricsRegistry)
 
 	mux := http.NewServeMux()
 	mux.Handle(cfg.HealthPath, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -55,7 +53,7 @@ func main() {
 	}
 
 	go func() {
-		logger.Info("listening", "addr", cfg.ListenAddr, "cache_dir", cfg.CacheDir, "allowed_upstreams", cfg.AllowedUpstreams)
+		logger.Info("listening", "addr", cfg.ListenAddr, "mirror_dir", cfg.MirrorDir, "allowed_upstreams", cfg.AllowedUpstreams, "sync_stale_after", cfg.SyncStaleAfter)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("http server failed", "err", err)
 			os.Exit(1)

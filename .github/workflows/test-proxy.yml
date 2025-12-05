@@ -14,8 +14,8 @@ jobs:
 
       - name: Start proxy
         run: |
-          mkdir -p /tmp/git-cache
-          CACHE_DIR=/tmp/git-cache \
+          mkdir -p /tmp/git-mirrors
+          MIRROR_DIR=/tmp/git-mirrors \
           LISTEN_ADDR=:8080 \
           AUTH_MODE=none \
           LOG_LEVEL=debug \
@@ -46,14 +46,21 @@ jobs:
           test -f checkout2/README.md
           echo "Second checkout verified"
 
-      - name: Verify cache hits
+      - name: Verify mirror exists
+        run: |
+          echo "--- Checking mirror ---"
+          ls -la /tmp/git-mirrors/github.com/runs-on/
+          test -d /tmp/git-mirrors/github.com/runs-on/runs-on.git
+          echo "SUCCESS: Mirror exists!"
+
+      - name: Verify metrics
         run: |
           curl -s http://localhost:8080/metrics | tee /tmp/metrics.txt
-          echo "--- Cache metrics ---"
-          grep -E "smart_git_proxy_cache_(hits|misses)_total" /tmp/metrics.txt
-          if grep -q 'smart_git_proxy_cache_hits_total.*[1-9]' /tmp/metrics.txt; then
-            echo "SUCCESS: Cache hits detected!"
+          echo "--- Request metrics ---"
+          grep -E "smart_git_proxy_requests_total" /tmp/metrics.txt
+          if grep -q 'smart_git_proxy_requests_total.*[1-9]' /tmp/metrics.txt; then
+            echo "SUCCESS: Requests recorded!"
           else
-            echo "WARNING: No cache hits found"
+            echo "WARNING: No requests found"
             exit 1
           fi
