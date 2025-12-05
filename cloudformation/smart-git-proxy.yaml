@@ -34,15 +34,15 @@ Parameters:
     Description: Assign public IP (set to true for public subnets)
   InstanceType:
     Type: String
-    Default: t3.micro
-    Description: EC2 instance type (use c5d/m5d/i3 for NVMe instance store)
+    Default: t4g.micro
+    Description: EC2 instance type (use c7gd/m7gd for ARM with NVMe instance store)
   RootVolumeSize:
     Type: Number
     Default: 30
     Description: Root EBS volume size in GB
   AmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
   ProxyVersion:
     Type: String
     Default: latest
@@ -163,9 +163,9 @@ Resources:
             # Install smart-git-proxy RPM
             VERSION="${ProxyVersion}"
             if [ "$VERSION" = "latest" ]; then
-              RPM_URL=$(curl -s https://api.github.com/repos/runs-on/smart-git-proxy/releases/latest | grep browser_download_url | grep "linux_amd64.rpm" | cut -d '"' -f 4)
+              RPM_URL=$(curl -s https://api.github.com/repos/runs-on/smart-git-proxy/releases/latest | grep browser_download_url | grep "linux_arm64.rpm" | cut -d '"' -f 4)
             else
-              RPM_URL="https://github.com/runs-on/smart-git-proxy/releases/download/v$VERSION/smart-git-proxy_${!VERSION}_linux_amd64.rpm"
+              RPM_URL="https://github.com/runs-on/smart-git-proxy/releases/download/v$VERSION/smart-git-proxy_${!VERSION}_linux_arm64.rpm"
             fi
             
             yum install -y "$RPM_URL"

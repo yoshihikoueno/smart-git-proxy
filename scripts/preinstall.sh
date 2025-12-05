@@ -4,8 +4,20 @@ set -e
 # Setup ephemeral storage if available (NVMe instance store on EC2)
 # This runs before package installation
 
-MIRROR_PATH="/var/lib/smart-git-proxy/mirrors"
-CONFIG_PATH="/etc/smart-git-proxy"
+APP_NAME="smart-git-proxy"
+MIRROR_PATH="/var/lib/$APP_NAME/mirrors"
+CONFIG_PATH="/etc/$APP_NAME"
+USER_NAME="smart-git-proxy"
+GROUP_NAME="smart-git-proxy"
+
+# Create system user/group if not exists
+if ! getent group $GROUP_NAME >/dev/null; then
+    groupadd --system $GROUP_NAME
+fi
+
+if ! getent passwd $USER_NAME >/dev/null; then
+    useradd --system --gid $GROUP_NAME --home-dir /var/lib/$APP_NAME --shell /usr/sbin/nologin $USER_NAME
+fi
 
 setup_ephemeral_storage() {
     # Check if we have required tools
