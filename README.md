@@ -8,7 +8,7 @@ Download pre-built binaries from [Releases](https://github.com/runs-on/smart-git
 
 ### Debian/Ubuntu (.deb)
 ```bash
-# Download and install (auto-creates gitproxy user, enables systemd service)
+# Download and install (auto-creates user, enables systemd service)
 curl -LO https://github.com/runs-on/smart-git-proxy/releases/latest/download/smart-git-proxy_<version>_linux_amd64.deb
 sudo dpkg -i smart-git-proxy_*.deb
 

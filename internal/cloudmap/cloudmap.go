@@ -31,8 +31,9 @@ type Manager struct {
 	client     *servicediscovery.Client
 	logger     *slog.Logger
 
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	cancel              context.CancelFunc
+	wg                  sync.WaitGroup
+	healthCheckDisabled bool
 }
 
 // New creates a Cloud Map manager. It fetches EC2 instance metadata and registers with Cloud Map.
@@ -100,12 +101,16 @@ func (m *Manager) Start(ctx context.Context) error {
 		"region", m.region,
 	)
 
-	// Start heartbeat
+	// Start heartbeat with delay for eventual consistency
 	hbCtx, cancel := context.WithCancel(ctx)
 	m.cancel = cancel
 
 	m.wg.Add(1)
-	go m.heartbeatLoop(hbCtx)
+	go func() {
+		// Wait for Cloud Map registration to propagate before health updates
+		time.Sleep(5 * time.Second)
+		m.heartbeatLoop(hbCtx)
+	}()
 
 	return nil
 }
@@ -149,6 +154,10 @@ func (m *Manager) heartbeatLoop(ctx context.Context) {
 }
 
 func (m *Manager) updateHealthStatus(ctx context.Context) {
+	if m.healthCheckDisabled {
+		return
+	}
+
 	status := sdtypes.CustomHealthStatusHealthy
 	if !m.checkHealth() {
 		status = sdtypes.CustomHealthStatusUnhealthy

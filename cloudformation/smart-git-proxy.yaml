@@ -181,8 +181,7 @@ Resources:
             yum install -y "$RPM_URL"
 
             # Configure smart-git-proxy with Cloud Map service ID for registration and health heartbeat
-            mkdir -p /etc/smart-git-proxy
-            echo "AWS_CLOUD_MAP_SERVICE_ID=${ProxyService}" > /etc/smart-git-proxy/env
+            echo "AWS_CLOUD_MAP_SERVICE_ID=${ProxyService}" >> /etc/smart-git-proxy/env
 
             # Restart service to pick up Cloud Map config
             systemctl restart smart-git-proxy

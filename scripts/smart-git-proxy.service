@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=gitproxy
-Group=gitproxy
+User=smart-git-proxy
+Group=smart-git-proxy
 EnvironmentFile=/etc/smart-git-proxy/env
 ExecStart=/usr/bin/smart-git-proxy
 Restart=on-failure

@@ -4,7 +4,8 @@ set -e
 # Setup ephemeral storage if available (NVMe instance store on EC2)
 # This runs before package installation
 
-MIRROR_PATH="/var/lib/gitproxy/mirrors"
+MIRROR_PATH="/var/lib/smart-git-proxy/mirrors"
+CONFIG_PATH="/etc/smart-git-proxy"
 
 setup_ephemeral_storage() {
     # Check if we have required tools
@@ -95,4 +96,21 @@ setup_ephemeral_storage() {
 # Only run on Linux (EC2)
 if [ "$(uname)" = "Linux" ]; then
     setup_ephemeral_storage
+fi
+
+# Create mirror directory if not already created by preinstall (ephemeral storage)
+mkdir -p $MIRROR_PATH
+
+# Set proper ownership (handles both ephemeral and regular storage)
+chown $USER_NAME:$GROUP_NAME $MIRROR_PATH
+
+# Create config directory and default env file if not exists
+mkdir -p $CONFIG_PATH
+if [ ! -f $CONFIG_PATH/env ]; then
+    touch $CONFIG_PATH/env
+fi
+
+# set MIRROR_DIR in env file if not already set
+if ! grep -q "MIRROR_DIR=" $CONFIG_PATH/env; then
+    echo "MIRROR_DIR=$MIRROR_PATH" >> $CONFIG_PATH/env
 fi
