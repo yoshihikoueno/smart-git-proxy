@@ -25,7 +25,7 @@ jobs:
           curl -f http://localhost:8080/healthz
 
       - name: Configure git to use proxy
-        run: git config --global url."http://localhost:8080/".insteadOf "https://github.com/"
+        run: git config --global url."http://localhost:8080/github.com/".insteadOf "https://github.com/"
 
       - uses: actions/checkout@v6
         with:
