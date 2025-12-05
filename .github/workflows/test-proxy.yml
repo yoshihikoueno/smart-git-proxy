@@ -33,7 +33,7 @@ jobs:
       - name: Test clone via proxy (manual)
         run: |
           rm -rf /tmp/test-clone
-          git clone https://github.com/runs-on/runs-on /tmp/test-clone
+          timeout 30 git clone https://github.com/runs-on/runs-on /tmp/test-clone
           test -f /tmp/test-clone/README.md
           echo "Manual clone verified"
 
