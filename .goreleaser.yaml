@@ -45,6 +45,7 @@ nfpms:
         dst: /etc/smart-git-proxy/env
         type: config|noreplace
     scripts:
+      preinstall: scripts/preinstall.sh
       postinstall: scripts/postinstall.sh
       preremove: scripts/preremove.sh
       postremove: scripts/postremove.sh

@@ -1,0 +1,346 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Smart Git Proxy with auto-discovery via Cloud Map
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to deploy into
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets for the ASG (private subnets recommended)
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    Description: EC2 instance type (use c5d/m5d/i3 for NVMe instance store)
+  RootVolumeSize:
+    Type: Number
+    Default: 30
+    Description: Root EBS volume size in GB
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  ProxyVersion:
+    Type: String
+    Default: latest
+    Description: Version of smart-git-proxy to install (e.g., 0.1.0 or latest)
+
+Resources:
+  # Cloud Map namespace creates private hosted zone automatically
+  ServiceNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: runs-on
+      Vpc: !Ref VpcId
+      Description: Private namespace for RunsOn services
+
+  # Cloud Map service - this creates the DNS record
+  ProxyService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: smart-git-proxy
+      NamespaceId: !Ref ServiceNamespace
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 60
+        RoutingPolicy: MULTIVALUE
+      # Custom health check - instance reports its own health
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+
+  # Security group for the proxy
+  ProxySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Smart Git Proxy
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 10.0.0.0/8
+          Description: Git proxy from VPC
+
+  # IAM role for EC2 instances
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: CloudMapRegistration
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - servicediscovery:RegisterInstance
+                  - servicediscovery:DeregisterInstance
+                  - servicediscovery:UpdateInstanceCustomHealthStatus
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - autoscaling:CompleteLifecycleAction
+                Resource: '*'
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  # Launch template
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Arn: !GetAtt InstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref ProxySecurityGroup
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: !Ref RootVolumeSize
+              VolumeType: gp3
+              DeleteOnTermination: true
+        MetadataOptions:
+          HttpTokens: required
+          HttpEndpoint: enabled
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -ex
+            exec > >(tee /var/log/user-data.log) 2>&1
+
+            # Get instance metadata
+            TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+            INSTANCE_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+            PRIVATE_IP=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+            REGION=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+
+            # Install dependencies for ephemeral storage setup (preinstall script needs these)
+            yum install -y mdadm xfsprogs nvme-cli
+
+            # Install smart-git-proxy RPM
+            VERSION="${ProxyVersion}"
+            if [ "$VERSION" = "latest" ]; then
+              RPM_URL=$(curl -s https://api.github.com/repos/runs-on/smart-git-proxy/releases/latest | grep browser_download_url | grep "linux_amd64.rpm" | cut -d '"' -f 4)
+            else
+              RPM_URL="https://github.com/runs-on/smart-git-proxy/releases/download/v$VERSION/smart-git-proxy_${!VERSION}_linux_amd64.rpm"
+            fi
+            
+            yum install -y "$RPM_URL"
+
+            # Setup Cloud Map health check reporter
+            cat > /usr/local/bin/cloudmap-health-check.sh << 'HEALTHSCRIPT'
+            #!/bin/bash
+            TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+            INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+            REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+            SERVICE_ID="${ProxyService}"
+
+            if curl -sf http://localhost:8080/healthz > /dev/null 2>&1; then
+              STATUS="HEALTHY"
+            else
+              STATUS="UNHEALTHY"
+            fi
+
+            aws servicediscovery update-instance-custom-health-status \
+              --service-id "$SERVICE_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --status "$STATUS" \
+              --region "$REGION" 2>/dev/null || true
+            HEALTHSCRIPT
+            chmod +x /usr/local/bin/cloudmap-health-check.sh
+
+            # Systemd timer for health checks (every 10s)
+            cat > /etc/systemd/system/cloudmap-health-check.service << 'EOF'
+            [Unit]
+            Description=Cloud Map Health Check
+
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/local/bin/cloudmap-health-check.sh
+            EOF
+
+            cat > /etc/systemd/system/cloudmap-health-check.timer << 'EOF'
+            [Unit]
+            Description=Run Cloud Map health check every 10 seconds
+
+            [Timer]
+            OnBootSec=30
+            OnUnitActiveSec=10
+
+            [Install]
+            WantedBy=timers.target
+            EOF
+
+            systemctl daemon-reload
+            systemctl enable cloudmap-health-check.timer
+            systemctl start cloudmap-health-check.timer
+
+            # Register with Cloud Map
+            aws servicediscovery register-instance \
+              --service-id ${ProxyService} \
+              --instance-id "$INSTANCE_ID" \
+              --attributes AWS_INSTANCE_IPV4="$PRIVATE_IP" \
+              --region "$REGION"
+
+            # Wait for service to be healthy, then mark as healthy
+            sleep 5
+            aws servicediscovery update-instance-custom-health-status \
+              --service-id ${ProxyService} \
+              --instance-id "$INSTANCE_ID" \
+              --status HEALTHY \
+              --region "$REGION"
+
+            # Signal ASG that launch is complete
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
+
+  # Auto Scaling Group
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier: !Ref SubnetIds
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: 1
+      MaxSize: 1
+      DesiredCapacity: 1
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 300
+      LifecycleHookSpecificationList:
+        - LifecycleTransition: autoscaling:EC2_INSTANCE_TERMINATING
+          LifecycleHookName: DeregisterFromCloudMap
+          DefaultResult: CONTINUE
+          HeartbeatTimeout: 60
+      Tags:
+        - Key: Name
+          Value: smart-git-proxy
+          PropagateAtLaunch: true
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT10M
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 0
+        MaxBatchSize: 1
+        PauseTime: PT10M
+        WaitOnResourceSignals: true
+
+  # Lambda to handle deregistration on termination
+  DeregisterLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CloudMapDeregister
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - servicediscovery:DeregisterInstance
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - autoscaling:CompleteLifecycleAction
+                Resource: '*'
+
+  DeregisterLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-deregister
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt DeregisterLambdaRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          SERVICE_ID: !Ref ProxyService
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          import json
+
+          def handler(event, context):
+              print(json.dumps(event))
+              
+              sd = boto3.client('servicediscovery')
+              asg = boto3.client('autoscaling')
+              
+              service_id = os.environ['SERVICE_ID']
+              detail = event['detail']
+              instance_id = detail['EC2InstanceId']
+              lifecycle_hook = detail['LifecycleHookName']
+              asg_name = detail['AutoScalingGroupName']
+              
+              try:
+                  sd.deregister_instance(ServiceId=service_id, InstanceId=instance_id)
+                  print(f"Deregistered {instance_id}")
+              except Exception as e:
+                  print(f"Error: {e}")
+              
+              asg.complete_lifecycle_action(
+                  LifecycleHookName=lifecycle_hook,
+                  AutoScalingGroupName=asg_name,
+                  InstanceId=instance_id,
+                  LifecycleActionResult='CONTINUE'
+              )
+              return {'statusCode': 200}
+
+  # EventBridge rule to trigger Lambda on termination
+  TerminationRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - aws.autoscaling
+        detail-type:
+          - EC2 Instance-terminate Lifecycle Action
+        detail:
+          AutoScalingGroupName:
+            - !Ref AutoScalingGroup
+      Targets:
+        - Id: DeregisterLambda
+          Arn: !GetAtt DeregisterLambda.Arn
+
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DeregisterLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt TerminationRule.Arn
+
+Outputs:
+  ProxyDnsName:
+    Description: DNS name for the proxy
+    Value: smart-git-proxy.runs-on
+  NamespaceId:
+    Description: Cloud Map namespace ID
+    Value: !Ref ServiceNamespace
+  ServiceId:
+    Description: Cloud Map service ID
+    Value: !Ref ProxyService

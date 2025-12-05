@@ -10,8 +10,10 @@ if ! getent passwd gitproxy >/dev/null; then
     useradd --system --gid gitproxy --home-dir /var/lib/gitproxy --shell /usr/sbin/nologin gitproxy
 fi
 
-# Create default mirror directory
+# Create mirror directory if not already created by preinstall (ephemeral storage)
 mkdir -p /var/lib/gitproxy/mirrors
+
+# Set proper ownership (handles both ephemeral and regular storage)
 chown -R gitproxy:gitproxy /var/lib/gitproxy
 
 # Reload systemd and enable service
