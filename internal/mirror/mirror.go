@@ -61,22 +61,34 @@ func (m *Mirror) EnsureRepo(ctx context.Context, host, owner, repo, upstreamURL,
 	repoPath := m.RepoPath(host, owner, repo)
 	key := fmt.Sprintf("%s/%s/%s", host, owner, repo)
 
-	// Check if repo exists
-	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
-		// Clone new repo (use singleflight to avoid concurrent clones)
-		_, err, shared := m.group.Do("clone:"+key, func() (interface{}, error) {
-			return nil, m.cloneRepo(ctx, repoPath, upstreamURL, authHeader)
-		})
-		if shared {
-			m.log.Info("waited for in-flight clone", "repo", key)
+	// Use singleflight for clone to handle the race where:
+	// 1. Client A sees repo doesn't exist, starts clone
+	// 2. Git creates the directory (but clone isn't done)
+	// 3. Client B sees directory exists, skips singleflight, tries to serve incomplete repo
+	// By always going through singleflight for clone, Client B will wait for Client A's clone to complete.
+	result, err, shared := m.group.Do("clone:"+key, func() (interface{}, error) {
+		// Check inside singleflight to avoid TOCTOU race
+		if _, err := os.Stat(repoPath); os.IsNotExist(err) {
+			if err := m.cloneRepo(ctx, repoPath, upstreamURL, authHeader); err != nil {
+				return StatusClone, err
+			}
+			m.lastSync.Store(key, time.Now())
+			m.cache.Touch(key)
+			// Trigger LRU eviction check in background after clone
+			go m.cache.MaybeEvict()
+			return StatusClone, nil
 		}
-		if err != nil {
-			return "", "", err
-		}
-		m.lastSync.Store(key, time.Now())
-		m.cache.Touch(key)
-		// Trigger LRU eviction check in background after clone
-		go m.cache.MaybeEvict()
+		// Repo already exists, signal that no clone was needed
+		return StatusHit, nil
+	})
+	if err != nil {
+		return "", "", err
+	}
+	status := result.(Status)
+	if shared {
+		m.log.Info("waited for in-flight clone check", "repo", key, "status", status)
+	}
+	if status == StatusClone {
 		return repoPath, StatusClone, nil
 	}
 
