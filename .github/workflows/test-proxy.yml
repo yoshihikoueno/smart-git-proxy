@@ -17,7 +17,6 @@ jobs:
           mkdir -p /tmp/git-cache
           CACHE_DIR=/tmp/git-cache \
           LISTEN_ADDR=:8080 \
-          UPSTREAM_BASE=https://github.com \
           AUTH_MODE=none \
           LOG_LEVEL=debug \
           ./bin/smart-git-proxy &
