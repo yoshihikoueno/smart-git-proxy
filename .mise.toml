@@ -1,0 +1,7 @@
+[tools]
+go = "1.25"
+golangci-lint = "1.59.1"
+
+[settings]
+experimental = true
+

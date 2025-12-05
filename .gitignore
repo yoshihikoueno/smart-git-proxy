@@ -1,0 +1,27 @@
+# Binaries
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go build artifacts
+*.test
+*.out
+
+# Coverage
+coverage.txt
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Go modules
+go.work
+
+# misc
+/.env
+
+
