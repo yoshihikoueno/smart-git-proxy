@@ -5,15 +5,20 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // ServeInfoRefs handles GET /info/refs?service=git-upload-pack
 // It runs git-upload-pack --stateless-rpc --advertise-refs and adds the pkt-line header.
 func ServeInfoRefs(w http.ResponseWriter, r *http.Request, repoPath string, cacheStatus string) error {
+	start := time.Now()
+	log := slog.Default()
+
 	service := r.URL.Query().Get("service")
 	if service != "git-upload-pack" {
 		http.Error(w, "unsupported service", http.StatusBadRequest)
@@ -48,6 +53,7 @@ func ServeInfoRefs(w http.ResponseWriter, r *http.Request, repoPath string, cach
 	}
 
 	// Run git upload-pack to get refs
+	cmdStart := time.Now()
 	cmd := exec.CommandContext(r.Context(), "git", "upload-pack", "--stateless-rpc", "--advertise-refs", repoPath)
 	cmd.Env = gitEnv(gitProtocol)
 
@@ -61,16 +67,21 @@ func ServeInfoRefs(w http.ResponseWriter, r *http.Request, repoPath string, cach
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start git upload-pack: %w", err)
 	}
+	log.Debug("git upload-pack started (advertise-refs)", "path", repoPath, "startup_duration_ms", time.Since(cmdStart).Milliseconds())
 
 	// Stream output to client
-	if _, err := io.Copy(w, stdout); err != nil {
+	copyStart := time.Now()
+	n, err := io.Copy(w, stdout)
+	if err != nil {
 		_ = cmd.Wait()
 		return fmt.Errorf("copy stdout: %w", err)
 	}
+	log.Debug("git upload-pack output streamed (advertise-refs)", "path", repoPath, "bytes", n, "copy_duration_ms", time.Since(copyStart).Milliseconds())
 
 	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("wait git upload-pack: %w, stderr: %s", err, stderrBuf.String())
 	}
+	log.Debug("git upload-pack complete (advertise-refs)", "path", repoPath, "total_duration_ms", time.Since(start).Milliseconds())
 
 	return nil
 }
@@ -78,6 +89,9 @@ func ServeInfoRefs(w http.ResponseWriter, r *http.Request, repoPath string, cach
 // ServeUploadPack handles POST /git-upload-pack
 // It runs git-upload-pack --stateless-rpc with the request body as stdin.
 func ServeUploadPack(w http.ResponseWriter, r *http.Request, repoPath string, cacheStatus string) error {
+	start := time.Now()
+	log := slog.Default()
+
 	w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
 	w.Header().Set("Cache-Control", "no-cache")
 	if cacheStatus != "" {
@@ -87,14 +101,17 @@ func ServeUploadPack(w http.ResponseWriter, r *http.Request, repoPath string, ca
 	// Handle gzip-compressed request body
 	var body io.Reader = r.Body
 	if strings.Contains(r.Header.Get("Content-Encoding"), "gzip") {
+		gzStart := time.Now()
 		gz, err := gzip.NewReader(r.Body)
 		if err != nil {
 			return fmt.Errorf("gzip reader: %w", err)
 		}
 		defer gz.Close()
 		body = gz
+		log.Debug("gzip reader initialized", "path", repoPath, "duration_ms", time.Since(gzStart).Milliseconds())
 	}
 
+	cmdStart := time.Now()
 	cmd := exec.CommandContext(r.Context(), "git", "upload-pack", "--stateless-rpc", repoPath)
 	cmd.Stdin = body
 	cmd.Env = gitEnv(r.Header.Get("Git-Protocol"))
@@ -109,17 +126,22 @@ func ServeUploadPack(w http.ResponseWriter, r *http.Request, repoPath string, ca
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start git upload-pack: %w", err)
 	}
+	log.Debug("git upload-pack started", "path", repoPath, "startup_duration_ms", time.Since(cmdStart).Milliseconds())
 
 	// Stream stdout to response
 	w.WriteHeader(http.StatusOK)
-	if _, err := io.Copy(w, stdout); err != nil {
+	copyStart := time.Now()
+	n, err := io.Copy(w, stdout)
+	if err != nil {
 		_ = cmd.Wait()
 		return fmt.Errorf("copy stdout: %w, stderr: %s", err, stderrBuf.String())
 	}
+	log.Debug("git upload-pack output streamed", "path", repoPath, "bytes", n, "copy_duration_ms", time.Since(copyStart).Milliseconds())
 
 	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("wait git upload-pack: %w, stderr: %s", err, stderrBuf.String())
 	}
+	log.Debug("git upload-pack complete", "path", repoPath, "total_duration_ms", time.Since(start).Milliseconds())
 
 	return nil
 }

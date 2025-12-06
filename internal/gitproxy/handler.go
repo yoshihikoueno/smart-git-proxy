@@ -90,24 +90,29 @@ func (s *Server) handleInfoRefs(w http.ResponseWriter, r *http.Request, host, ow
 	s.log.Debug("auth check", "mode", s.cfg.AuthMode, "hasAuth", authHeader != "", "repo", repoKey)
 
 	// Ensure mirror is synced
+	ensureStart := time.Now()
 	repoPath, status, err := s.mirror.EnsureRepo(r.Context(), host, owner, repo, upstreamURL, authHeader)
 	if err != nil {
 		s.fail(w, repoKey, KindInfo, err)
 		return
 	}
+	s.log.Debug("ensure repo done", "repo", repoKey, "status", status, "duration_ms", time.Since(ensureStart).Milliseconds())
 
 	// Store status for the upcoming upload-pack request
 	s.statusCache.Store(repoKey, status)
 	s.log.Info("request", "repo", repoKey, "status", status)
 
 	// Serve refs from local mirror
+	serveStart := time.Now()
 	if err := gitserve.ServeInfoRefs(w, r, repoPath, string(status)); err != nil {
-		s.log.Error("serve info/refs failed", "err", err, "repo", repoKey)
+		s.log.Error("serve info/refs failed", "err", err, "repo", repoKey, "duration_ms", time.Since(serveStart).Milliseconds())
 		// Response already started, can't change status
 	}
+	s.log.Debug("serve info/refs done", "repo", repoKey, "duration_ms", time.Since(serveStart).Milliseconds())
 
 	s.metrics.ResponsesTotal.WithLabelValues(repoKey, string(KindInfo), "200").Inc()
 	s.metrics.UpstreamLatency.WithLabelValues(repoKey, string(KindInfo)).Observe(time.Since(start).Seconds())
+	s.log.Debug("info/refs complete", "repo", repoKey, "total_duration_ms", time.Since(start).Milliseconds())
 }
 
 func (s *Server) handleUploadPack(w http.ResponseWriter, r *http.Request, host, owner, repo, repoKey string, start time.Time) {
@@ -121,13 +126,16 @@ func (s *Server) handleUploadPack(w http.ResponseWriter, r *http.Request, host, 
 	}
 
 	// Serve pack from local mirror
+	serveStart := time.Now()
 	if err := gitserve.ServeUploadPack(w, r, repoPath, cacheStatus); err != nil {
-		s.log.Error("serve upload-pack failed", "err", err, "repo", repoKey)
+		s.log.Error("serve upload-pack failed", "err", err, "repo", repoKey, "duration_ms", time.Since(serveStart).Milliseconds())
 		// Response already started, can't change status
 	}
+	s.log.Debug("serve upload-pack done", "repo", repoKey, "duration_ms", time.Since(serveStart).Milliseconds())
 
 	s.metrics.ResponsesTotal.WithLabelValues(repoKey, string(KindPack), "200").Inc()
 	s.metrics.UpstreamLatency.WithLabelValues(repoKey, string(KindPack)).Observe(time.Since(start).Seconds())
+	s.log.Debug("upload-pack complete", "repo", repoKey, "total_duration_ms", time.Since(start).Milliseconds())
 }
 
 func (s *Server) resolveTarget(r *http.Request) (host, owner, repo string, kind Kind, err error) {

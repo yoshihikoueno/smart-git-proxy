@@ -58,14 +58,18 @@ func (m *Mirror) RepoPath(host, owner, repo string) string {
 // authHeader is the Authorization header value from the client request (can be empty).
 // Returns the path to the bare repo and the cache status.
 func (m *Mirror) EnsureRepo(ctx context.Context, host, owner, repo, upstreamURL, authHeader string) (string, Status, error) {
+	start := time.Now()
 	repoPath := m.RepoPath(host, owner, repo)
 	key := fmt.Sprintf("%s/%s/%s", host, owner, repo)
+
+	m.log.Debug("ensure repo started", "repo", key)
 
 	// Use singleflight for clone to handle the race where:
 	// 1. Client A sees repo doesn't exist, starts clone
 	// 2. Git creates the directory (but clone isn't done)
 	// 3. Client B sees directory exists, skips singleflight, tries to serve incomplete repo
 	// By always going through singleflight for clone, Client B will wait for Client A's clone to complete.
+	cloneCheckStart := time.Now()
 	result, err, shared := m.group.Do("clone:"+key, func() (interface{}, error) {
 		// Check inside singleflight to avoid TOCTOU race
 		if _, err := os.Stat(repoPath); os.IsNotExist(err) {
@@ -81,14 +85,16 @@ func (m *Mirror) EnsureRepo(ctx context.Context, host, owner, repo, upstreamURL,
 		// Repo already exists, signal that no clone was needed
 		return StatusHit, nil
 	})
+	m.log.Debug("clone check complete", "repo", key, "duration_ms", time.Since(cloneCheckStart).Milliseconds(), "shared", shared)
 	if err != nil {
 		return "", "", err
 	}
 	status := result.(Status)
 	if shared {
-		m.log.Info("waited for in-flight clone check", "repo", key, "status", status)
+		m.log.Info("waited for in-flight clone check", "repo", key, "status", status, "wait_duration_ms", time.Since(cloneCheckStart).Milliseconds())
 	}
 	if status == StatusClone {
+		m.log.Debug("ensure repo complete (clone)", "repo", key, "total_duration_ms", time.Since(start).Milliseconds())
 		return repoPath, StatusClone, nil
 	}
 
@@ -97,30 +103,35 @@ func (m *Mirror) EnsureRepo(ctx context.Context, host, owner, repo, upstreamURL,
 
 	// Repo exists - check if it requires auth
 	if m.requiresAuth(repoPath) {
+		authStart := time.Now()
 		if err := m.validateAuth(ctx, upstreamURL, authHeader); err != nil {
-			m.log.Warn("auth validation failed", "repo", key, "err", err)
+			m.log.Warn("auth validation failed", "repo", key, "err", err, "duration_ms", time.Since(authStart).Milliseconds())
 			return "", "", fmt.Errorf("authentication required: %w", err)
 		}
+		m.log.Debug("auth validation passed", "repo", key, "duration_ms", time.Since(authStart).Milliseconds())
 	}
 
 	// Check if we need to sync
 	if m.isStale(key) {
+		syncStart := time.Now()
 		// Sync using singleflight (concurrent requests share same fetch)
 		_, err, shared := m.group.Do("sync:"+key, func() (interface{}, error) {
 			return nil, m.syncRepo(ctx, repoPath, upstreamURL, authHeader)
 		})
 		if shared {
-			m.log.Debug("waited for in-flight sync", "repo", key)
+			m.log.Debug("waited for in-flight sync", "repo", key, "wait_duration_ms", time.Since(syncStart).Milliseconds())
 		}
 		if err != nil {
-			m.log.Warn("sync failed, serving stale", "repo", key, "err", err)
+			m.log.Warn("sync failed, serving stale", "repo", key, "err", err, "duration_ms", time.Since(syncStart).Milliseconds())
 			// Continue serving stale data, but still report as hit
 			return repoPath, StatusHit, nil
 		}
 		m.lastSync.Store(key, time.Now())
+		m.log.Debug("ensure repo complete (sync)", "repo", key, "sync_duration_ms", time.Since(syncStart).Milliseconds(), "total_duration_ms", time.Since(start).Milliseconds())
 		return repoPath, StatusSync, nil
 	}
 
+	m.log.Debug("ensure repo complete (hit)", "repo", key, "total_duration_ms", time.Since(start).Milliseconds())
 	return repoPath, StatusHit, nil
 }
 
@@ -146,6 +157,7 @@ func (m *Mirror) markRequiresAuth(repoPath string) error {
 
 // validateAuth validates the auth token can access the upstream repo using git ls-remote.
 func (m *Mirror) validateAuth(ctx context.Context, upstreamURL, authHeader string) error {
+	start := time.Now()
 	args := []string{"ls-remote", "--exit-code", "-q", upstreamURL, "HEAD"}
 
 	cmd := exec.CommandContext(ctx, "git", args...)
@@ -153,19 +165,23 @@ func (m *Mirror) validateAuth(ctx context.Context, upstreamURL, authHeader strin
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		m.log.Debug("auth validation failed", "duration_ms", time.Since(start).Milliseconds(), "upstream", upstreamURL)
 		return fmt.Errorf("git ls-remote failed: %w\noutput: %s", err, output)
 	}
+	m.log.Debug("auth validation complete", "duration_ms", time.Since(start).Milliseconds(), "upstream", upstreamURL)
 	return nil
 }
 
 // cloneRepo creates a new bare mirror.
 func (m *Mirror) cloneRepo(ctx context.Context, repoPath, upstreamURL, authHeader string) error {
+	start := time.Now()
 	m.log.Info("cloning mirror", "path", repoPath, "upstream", upstreamURL, "hasAuth", authHeader != "")
 
 	// Create parent directory
 	if err := os.MkdirAll(filepath.Dir(repoPath), 0o755); err != nil {
 		return fmt.Errorf("create parent dir: %w", err)
 	}
+	m.log.Debug("parent directory ready", "duration_ms", time.Since(start).Milliseconds())
 
 	// Disable GC and reduce memory pressure for large repos
 	args := []string{
@@ -178,12 +194,15 @@ func (m *Mirror) cloneRepo(ctx context.Context, repoPath, upstreamURL, authHeade
 		"clone", "--bare", "--mirror", upstreamURL, repoPath,
 	}
 
+	cloneStart := time.Now()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = gitEnv(authHeader)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		m.log.Debug("git clone failed", "duration_ms", time.Since(cloneStart).Milliseconds(), "path", repoPath)
 		return fmt.Errorf("git clone failed: %w\noutput: %s", err, output)
 	}
+	m.log.Debug("git clone command complete", "duration_ms", time.Since(cloneStart).Milliseconds(), "path", repoPath)
 
 	// Mark repo as requiring auth if it was cloned with auth
 	if authHeader != "" {
@@ -192,12 +211,13 @@ func (m *Mirror) cloneRepo(ctx context.Context, repoPath, upstreamURL, authHeade
 		}
 	}
 
-	m.log.Info("clone complete", "path", repoPath)
+	m.log.Info("clone complete", "path", repoPath, "total_duration_ms", time.Since(start).Milliseconds())
 	return nil
 }
 
 // syncRepo fetches updates from upstream.
 func (m *Mirror) syncRepo(ctx context.Context, repoPath, upstreamURL, authHeader string) error {
+	start := time.Now()
 	m.log.Debug("syncing mirror", "path", repoPath, "hasAuth", authHeader != "")
 
 	// Disable GC and reduce memory pressure for large repos
@@ -216,10 +236,11 @@ func (m *Mirror) syncRepo(ctx context.Context, repoPath, upstreamURL, authHeader
 	cmd.Env = gitEnv(authHeader)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		m.log.Debug("git fetch failed", "duration_ms", time.Since(start).Milliseconds(), "path", repoPath)
 		return fmt.Errorf("git fetch failed: %w\noutput: %s", err, output)
 	}
 
-	m.log.Debug("sync complete", "path", repoPath)
+	m.log.Debug("sync complete", "path", repoPath, "duration_ms", time.Since(start).Milliseconds())
 	return nil
 }
 
