@@ -15,9 +15,8 @@ import (
 
 // ServeInfoRefs handles GET /info/refs?service=git-upload-pack
 // It runs git-upload-pack --stateless-rpc --advertise-refs and adds the pkt-line header.
-func ServeInfoRefs(w http.ResponseWriter, r *http.Request, repoPath string, cacheStatus string) error {
+func ServeInfoRefs(w http.ResponseWriter, r *http.Request, repoPath string, cacheStatus string, packThreads int, log *slog.Logger) error {
 	start := time.Now()
-	log := slog.Default()
 
 	service := r.URL.Query().Get("service")
 	if service != "git-upload-pack" {
@@ -54,7 +53,11 @@ func ServeInfoRefs(w http.ResponseWriter, r *http.Request, repoPath string, cach
 
 	// Run git upload-pack to get refs
 	cmdStart := time.Now()
-	cmd := exec.CommandContext(r.Context(), "git", "upload-pack", "--stateless-rpc", "--advertise-refs", repoPath)
+	args := []string{"upload-pack", "--stateless-rpc", "--advertise-refs", repoPath}
+	if packThreads > 0 {
+		args = append([]string{"-c", fmt.Sprintf("pack.threads=%d", packThreads)}, args...)
+	}
+	cmd := exec.CommandContext(r.Context(), "git", args...)
 	cmd.Env = gitEnv(gitProtocol)
 
 	stdout, err := cmd.StdoutPipe()
@@ -88,9 +91,8 @@ func ServeInfoRefs(w http.ResponseWriter, r *http.Request, repoPath string, cach
 
 // ServeUploadPack handles POST /git-upload-pack
 // It runs git-upload-pack --stateless-rpc with the request body as stdin.
-func ServeUploadPack(w http.ResponseWriter, r *http.Request, repoPath string, cacheStatus string) error {
+func ServeUploadPack(w http.ResponseWriter, r *http.Request, repoPath string, cacheStatus string, packThreads int, log *slog.Logger) error {
 	start := time.Now()
-	log := slog.Default()
 
 	w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -112,7 +114,11 @@ func ServeUploadPack(w http.ResponseWriter, r *http.Request, repoPath string, ca
 	}
 
 	cmdStart := time.Now()
-	cmd := exec.CommandContext(r.Context(), "git", "upload-pack", "--stateless-rpc", repoPath)
+	args := []string{"upload-pack", "--stateless-rpc", repoPath}
+	if packThreads > 0 {
+		args = append([]string{"-c", fmt.Sprintf("pack.threads=%d", packThreads)}, args...)
+	}
+	cmd := exec.CommandContext(r.Context(), "git", args...)
 	cmd.Stdin = body
 	cmd.Env = gitEnv(r.Header.Get("Git-Protocol"))
 

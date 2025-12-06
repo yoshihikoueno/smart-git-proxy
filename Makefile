@@ -2,7 +2,7 @@ GO ?= mise exec -- go
 BIN := bin/smart-git-proxy
 PKG := ./...
 
-.PHONY: all build build-linux-arm64 lint test fmt tidy upload deploy bump remote-debug
+.PHONY: all build build-linux-arm64 lint test fmt tidy upload deploy bump remote-debug remote-ssh
 
 all: build
 
@@ -64,3 +64,14 @@ endif
 
 remote-debug: build-linux-arm64
 	./scripts/remote-debug.sh
+
+remote-ssh:
+	@INSTANCE_ID=$${INSTANCE_ID:-$$(aws ec2 describe-instances \
+		--filters "Name=tag:Name,Values=smart-git-proxy" "Name=instance-state-name,Values=running" \
+		--query 'Reservations[0].Instances[0].InstanceId' --output text)}; \
+	if [ "$$INSTANCE_ID" = "None" ] || [ -z "$$INSTANCE_ID" ]; then \
+		echo "Error: No running instance found with Name=smart-git-proxy"; \
+		exit 1; \
+	fi; \
+	echo "Connecting to $$INSTANCE_ID..."; \
+	aws ssm start-session --target "$$INSTANCE_ID" --document-name AWS-StartInteractiveCommand --parameters command="sudo -i"

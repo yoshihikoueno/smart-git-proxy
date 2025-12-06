@@ -104,7 +104,7 @@ func (s *Server) handleInfoRefs(w http.ResponseWriter, r *http.Request, host, ow
 
 	// Serve refs from local mirror
 	serveStart := time.Now()
-	if err := gitserve.ServeInfoRefs(w, r, repoPath, string(status)); err != nil {
+	if err := gitserve.ServeInfoRefs(w, r, repoPath, string(status), s.cfg.UploadPackThreads, s.log); err != nil {
 		s.log.Error("serve info/refs failed", "err", err, "repo", repoKey, "duration_ms", time.Since(serveStart).Milliseconds())
 		// Response already started, can't change status
 	}
@@ -119,6 +119,14 @@ func (s *Server) handleUploadPack(w http.ResponseWriter, r *http.Request, host, 
 	// Get mirror path (should already exist from info/refs)
 	repoPath := s.mirror.RepoPath(host, owner, repo)
 
+	// Optionally serialize upload-pack per repo to avoid parallel pack generation
+	var lock *sync.Mutex
+	if s.cfg.SerializeUploadPack {
+		lock = s.mirror.GetRepoLock(host, owner, repo)
+		lock.Lock()
+		defer lock.Unlock()
+	}
+
 	// Get cached status from info/refs call
 	cacheStatus := ""
 	if v, ok := s.statusCache.Load(repoKey); ok {
@@ -127,7 +135,7 @@ func (s *Server) handleUploadPack(w http.ResponseWriter, r *http.Request, host, 
 
 	// Serve pack from local mirror
 	serveStart := time.Now()
-	if err := gitserve.ServeUploadPack(w, r, repoPath, cacheStatus); err != nil {
+	if err := gitserve.ServeUploadPack(w, r, repoPath, cacheStatus, s.cfg.UploadPackThreads, s.log); err != nil {
 		s.log.Error("serve upload-pack failed", "err", err, "repo", repoKey, "duration_ms", time.Since(serveStart).Milliseconds())
 		// Response already started, can't change status
 	}

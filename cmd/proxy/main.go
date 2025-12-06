@@ -31,10 +31,31 @@ func main() {
 		log.Fatalf("logger init: %v", err)
 	}
 
-	mirrorStore, err := mirror.New(cfg.MirrorDir, cfg.SyncStaleAfter, cfg.MirrorMaxSize, logger)
+	mirrorStore, err := mirror.New(cfg.MirrorDir, cfg.SyncStaleAfter, cfg.MirrorMaxSize, cfg.UploadPackThreads, cfg.MaintainAfterSync, logger)
 	if err != nil {
 		logger.Error("mirror init failed", "err", err)
 		os.Exit(1)
+	}
+
+	// One-shot maintenance mode: run and exit
+	if cfg.MaintenanceRepo != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+
+		if cfg.MaintenanceRepo == "all" {
+			if err := mirrorStore.MaintainAll(ctx, true); err != nil {
+				logger.Error("maintenance all failed", "err", err)
+				os.Exit(1)
+			}
+			logger.Info("maintenance all completed")
+		} else {
+			if err := mirrorStore.MaintainRepo(ctx, cfg.MaintenanceRepo, true); err != nil {
+				logger.Error("maintenance repo failed", "repo", cfg.MaintenanceRepo, "err", err)
+				os.Exit(1)
+			}
+			logger.Info("maintenance repo completed", "repo", cfg.MaintenanceRepo)
+		}
+		return
 	}
 
 	metricsRegistry := metrics.New()

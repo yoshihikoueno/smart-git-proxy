@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -24,6 +25,10 @@ type Config struct {
 	AWSCloudMapServiceID string // If set, register with AWS Cloud Map and send heartbeats
 	Route53HostedZoneID  string // Route53 hosted zone ID for DNS registration
 	Route53RecordName    string // Route53 record name (e.g., git-proxy.example.com)
+	SerializeUploadPack  bool
+	UploadPackThreads    int
+	MaintainAfterSync    bool
+	MaintenanceRepo      string // If set, run maintenance on this repo (or "all") and exit
 }
 
 func Load() (*Config, error) {
@@ -46,6 +51,10 @@ func LoadArgs(args []string) (*Config, error) {
 	fs.StringVar(&cfg.AWSCloudMapServiceID, "aws-cloud-map-service-id", envOrDefault("AWS_CLOUD_MAP_SERVICE_ID", ""), "AWS Cloud Map service ID for registration and health heartbeat")
 	fs.StringVar(&cfg.Route53HostedZoneID, "route53-hosted-zone-id", envOrDefault("ROUTE53_HOSTED_ZONE_ID", ""), "Route53 hosted zone ID for DNS registration")
 	fs.StringVar(&cfg.Route53RecordName, "route53-record-name", envOrDefault("ROUTE53_RECORD_NAME", ""), "Route53 record name (e.g., git-proxy.example.com)")
+	fs.BoolVar(&cfg.SerializeUploadPack, "serialize-upload-pack", envOrDefaultBool("SERIALIZE_UPLOAD_PACK", false), "serialize upload-pack per repo to reduce concurrent packing CPU")
+	fs.IntVar(&cfg.UploadPackThreads, "upload-pack-threads", envOrDefaultInt("UPLOAD_PACK_THREADS", 0), "pack.threads to use for upload-pack (0 means git default)")
+	fs.BoolVar(&cfg.MaintainAfterSync, "maintain-after-sync", envOrDefaultBool("MAINTAIN_AFTER_SYNC", false), "run lightweight maintenance (midx bitmap + commit-graph) after sync")
+	fs.StringVar(&cfg.MaintenanceRepo, "maintenance-repo", envOrDefault("MAINTENANCE_REPO", ""), "if set, run maintenance on the given repo key (host/owner/repo) or \"all\" and exit")
 
 	allowedUpstreamsStr := fs.String("allowed-upstreams", envOrDefault("ALLOWED_UPSTREAMS", "github.com"), "comma-separated list of allowed upstream hosts")
 	syncStaleAfterStr := fs.String("sync-stale-after", envOrDefault("SYNC_STALE_AFTER", "2s"), "sync mirror if older than this duration")
@@ -102,6 +111,32 @@ func validateAuth(cfg *Config) error {
 func envOrDefault(key, def string) string {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		return v
+	}
+	return def
+}
+
+func envOrDefaultBool(key string, def bool) bool {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	switch strings.ToLower(v) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	case "0", "false", "no", "n", "off":
+		return false
+	default:
+		return def
+	}
+}
+
+func envOrDefaultInt(key string, def int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return n
 	}
 	return def
 }
