@@ -29,6 +29,7 @@ type Config struct {
 	UploadPackThreads    int
 	MaintainAfterSync    bool
 	MaintenanceRepo      string // If set, run maintenance on this repo (or "all") and exit
+	EnablePackCache      bool   // If true, allow cached pack fast-path for depth=1/no-have
 }
 
 func Load() (*Config, error) {
@@ -55,6 +56,7 @@ func LoadArgs(args []string) (*Config, error) {
 	fs.IntVar(&cfg.UploadPackThreads, "upload-pack-threads", envOrDefaultInt("UPLOAD_PACK_THREADS", 0), "pack.threads to use for upload-pack (0 means git default)")
 	fs.BoolVar(&cfg.MaintainAfterSync, "maintain-after-sync", envOrDefaultBool("MAINTAIN_AFTER_SYNC", false), "run lightweight maintenance (midx bitmap + commit-graph) after sync")
 	fs.StringVar(&cfg.MaintenanceRepo, "maintenance-repo", envOrDefault("MAINTENANCE_REPO", ""), "if set, run maintenance on the given repo key (host/owner/repo) or \"all\" and exit")
+	fs.BoolVar(&cfg.EnablePackCache, "enable-pack-cache", envOrDefaultBool("ENABLE_PACK_CACHE", true), "enable depth=1 cached pack fast-path (no-haves)")
 
 	allowedUpstreamsStr := fs.String("allowed-upstreams", envOrDefault("ALLOWED_UPSTREAMS", "github.com"), "comma-separated list of allowed upstream hosts")
 	syncStaleAfterStr := fs.String("sync-stale-after", envOrDefault("SYNC_STALE_AFTER", "2s"), "sync mirror if older than this duration")

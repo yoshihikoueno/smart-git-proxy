@@ -33,9 +33,10 @@ type Mirror struct {
 	packThreads       int
 	maintainAfterSync bool
 
-	group     singleflight.Group
-	lastSync  sync.Map // map[repoKey]time.Time
-	repoLocks sync.Map // map[repoKey]*sync.Mutex
+	group      singleflight.Group
+	maintGroup singleflight.Group
+	lastSync   sync.Map // map[repoKey]time.Time
+	repoLocks  sync.Map // map[repoKey]*sync.Mutex
 }
 
 // New creates a new Mirror manager.
@@ -131,7 +132,7 @@ func (m *Mirror) EnsureRepo(ctx context.Context, host, owner, repo, upstreamURL,
 		m.log.Debug("ensure repo complete (sync)", "repo", key, "sync_duration_ms", time.Since(syncStart).Milliseconds(), "total_duration_ms", time.Since(start).Milliseconds())
 
 		if m.maintainAfterSync {
-			go m.optimizeRepo(context.Background(), repoPath, false)
+			m.scheduleOptimize(repoPath, false)
 		}
 
 		return repoPath, StatusSync, nil
@@ -230,7 +231,7 @@ func (m *Mirror) cloneRepo(ctx context.Context, repoPath, upstreamURL, authHeade
 	m.log.Info("clone complete", "path", repoPath, "total_duration_ms", time.Since(start).Milliseconds())
 
 	// Optimize repo in background (bitmap index, commit-graph, maintenance)
-	go m.optimizeRepo(context.Background(), repoPath, true)
+	m.scheduleOptimize(repoPath, true)
 
 	return nil
 }
@@ -240,6 +241,13 @@ func (m *Mirror) cloneRepo(ctx context.Context, repoPath, upstreamURL, authHeade
 func (m *Mirror) optimizeRepo(ctx context.Context, repoPath string, full bool) {
 	start := time.Now()
 	m.log.Debug("optimizing repo", "path", repoPath, "full", full)
+
+	// Avoid lock contention if another git process is writing commit-graph
+	lockPath := filepath.Join(repoPath, "objects", "info", "commit-graph.lock")
+	if _, err := os.Stat(lockPath); err == nil {
+		m.log.Debug("commit-graph lock present, skipping maintenance", "path", repoPath)
+		return
+	}
 
 	if full {
 		repackStart := time.Now()
@@ -338,6 +346,19 @@ func (m *Mirror) MaintainAll(ctx context.Context, full bool) error {
 		}
 		return nil
 	})
+}
+
+// scheduleOptimize runs optimizeRepo with a per-repo singleflight to avoid concurrent maintenance.
+func (m *Mirror) scheduleOptimize(repoPath string, full bool) {
+	go func() {
+		_, err, _ := m.maintGroup.Do(repoPath, func() (interface{}, error) {
+			m.optimizeRepo(context.Background(), repoPath, full)
+			return nil, nil
+		})
+		if err != nil {
+			m.log.Warn("optimize singleflight failed", "path", repoPath, "err", err)
+		}
+	}()
 }
 
 // gitEnv returns environment variables for git commands.
