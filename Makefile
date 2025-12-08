@@ -1,6 +1,7 @@
 GO ?= mise exec -- go
 BIN := bin/smart-git-proxy
 PKG := ./...
+AWS_PROFILE ?= runs-on-dev
 
 .PHONY: all build build-linux-arm64 lint test fmt tidy upload deploy bump remote-debug remote-ssh
 
