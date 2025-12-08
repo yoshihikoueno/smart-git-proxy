@@ -12,6 +12,7 @@ Metadata:
           - ClientSecurityGroupId
           - InstanceType
           - RootVolumeSize
+          - InstanceCount
 
 Mappings:
   Config:
@@ -45,9 +46,15 @@ Parameters:
     Type: Number
     Default: 30
     Description: Root EBS volume size in GB
+  InstanceCount:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    Description: Number of proxy instances to run (spreads across provided subnets/AZs)
 
 Conditions:
   UsePublicIp: !Equals [!Ref AssignPublicIp, "true"]
+  IsSingleInstance: !Equals [!Ref InstanceCount, 1]
 
 Resources:
   # Private hosted zone for DNS-based service discovery
@@ -192,9 +199,9 @@ Resources:
       LaunchTemplate:
         LaunchTemplateId: !Ref LaunchTemplate
         Version: !GetAtt LaunchTemplate.LatestVersionNumber
-      MinSize: 1
-      MaxSize: 2
-      DesiredCapacity: 1
+      MinSize: !Ref InstanceCount
+      MaxSize: !If [IsSingleInstance, 2, !Ref InstanceCount]
+      DesiredCapacity: !Ref InstanceCount
       HealthCheckType: EC2
       HealthCheckGracePeriod: 30
       LifecycleHookSpecificationList:
@@ -208,7 +215,7 @@ Resources:
           PropagateAtLaunch: true
     CreationPolicy:
       ResourceSignal:
-        Count: 1
+        Count: !Ref InstanceCount
         Timeout: PT2M
     UpdatePolicy:
       AutoScalingRollingUpdate:
