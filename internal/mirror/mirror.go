@@ -361,6 +361,11 @@ func (m *Mirror) scheduleOptimize(repoPath string, full bool) {
 	}()
 }
 
+// SetLastSync is a test helper to seed lastSync for a repo key.
+func (m *Mirror) SetLastSync(repoKey string, t time.Time) {
+	m.lastSync.Store(repoKey, t)
+}
+
 // gitEnv returns environment variables for git commands.
 // Uses GIT_CONFIG_* env vars to pass auth without persisting to repo config.
 func gitEnv(authHeader string) []string {

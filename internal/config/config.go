@@ -53,8 +53,8 @@ func LoadArgs(args []string) (*Config, error) {
 	fs.StringVar(&cfg.Route53HostedZoneID, "route53-hosted-zone-id", envOrDefault("ROUTE53_HOSTED_ZONE_ID", ""), "Route53 hosted zone ID for DNS registration")
 	fs.StringVar(&cfg.Route53RecordName, "route53-record-name", envOrDefault("ROUTE53_RECORD_NAME", ""), "Route53 record name (e.g., git-proxy.example.com)")
 	fs.BoolVar(&cfg.SerializeUploadPack, "serialize-upload-pack", envOrDefaultBool("SERIALIZE_UPLOAD_PACK", false), "serialize upload-pack per repo to reduce concurrent packing CPU")
-	fs.IntVar(&cfg.UploadPackThreads, "upload-pack-threads", envOrDefaultInt("UPLOAD_PACK_THREADS", 0), "pack.threads to use for upload-pack (0 means git default)")
-	fs.BoolVar(&cfg.MaintainAfterSync, "maintain-after-sync", envOrDefaultBool("MAINTAIN_AFTER_SYNC", false), "run lightweight maintenance (midx bitmap + commit-graph) after sync")
+	fs.IntVar(&cfg.UploadPackThreads, "upload-pack-threads", envOrDefaultInt("UPLOAD_PACK_THREADS", 2), "pack.threads to use for upload-pack (0 means git default)")
+	fs.BoolVar(&cfg.MaintainAfterSync, "maintain-after-sync", envOrDefaultBool("MAINTAIN_AFTER_SYNC", true), "run lightweight maintenance (midx bitmap + commit-graph) after sync")
 	fs.StringVar(&cfg.MaintenanceRepo, "maintenance-repo", envOrDefault("MAINTENANCE_REPO", ""), "if set, run maintenance on the given repo key (host/owner/repo) or \"all\" and exit")
 	fs.BoolVar(&cfg.EnablePackCache, "enable-pack-cache", envOrDefaultBool("ENABLE_PACK_CACHE", true), "enable depth=1 cached pack fast-path (no-haves)")
 
