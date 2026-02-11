@@ -335,6 +335,10 @@ func (m *Mirror) MaintainRepo(ctx context.Context, repoKey string, full bool) er
 	return nil
 }
 
+func (m *Mirror) Root() string {
+    return m.root
+}
+
 // MaintainAll scans mirror root and runs maintenance on every *.git repo.
 func (m *Mirror) MaintainAll(ctx context.Context, full bool) error {
 	return filepath.WalkDir(m.root, func(p string, d os.DirEntry, err error) error {
