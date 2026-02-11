@@ -101,7 +101,7 @@ func (m *Mirror) EnsureRepo(ctx context.Context, host, owner, repo, upstreamURL,
 	}
 	if status == StatusClone {
 		m.log.Debug("ensure repo complete (clone)", "repo", key, "total_duration_ms", time.Since(start).Milliseconds())
-		return repoPath, StatusClone, nil
+		return repoPath, status, nil
 	}
 
 	// Touch cache on access (for LRU tracking)
@@ -109,6 +109,7 @@ func (m *Mirror) EnsureRepo(ctx context.Context, host, owner, repo, upstreamURL,
 
 	// Check if we need to sync first - sync validates auth implicitly via git fetch
 	// This avoids a separate ls-remote call (~110ms) when we're going to fetch anyway
+	status = StatusHit
 	if m.isStale(key) {
 		syncStart := time.Now()
 		// Sync using singleflight (concurrent requests share same fetch)
@@ -119,27 +120,26 @@ func (m *Mirror) EnsureRepo(ctx context.Context, host, owner, repo, upstreamURL,
 			m.log.Debug("waited for in-flight sync", "repo", key, "wait_duration_ms", time.Since(syncStart).Milliseconds())
 		}
 		if err != nil {
-			// For private repos, sync failure likely means auth failed
-			if m.requiresAuth(repoPath) {
-				m.log.Warn("sync failed (auth required)", "repo", key, "err", err, "duration_ms", time.Since(syncStart).Milliseconds())
-				return "", "", fmt.Errorf("authentication required: %w", err)
-			}
-			m.log.Warn("sync failed, serving stale", "repo", key, "err", err, "duration_ms", time.Since(syncStart).Milliseconds())
 			// Continue serving stale data, but still report as hit
-			return repoPath, StatusHit, nil
-		}
-		m.lastSync.Store(key, time.Now())
-		m.log.Debug("ensure repo complete (sync)", "repo", key, "sync_duration_ms", time.Since(syncStart).Milliseconds(), "total_duration_ms", time.Since(start).Milliseconds())
+			m.log.Warn("sync failed, serving stale", "repo", key, "err", err, "duration_ms", time.Since(syncStart).Milliseconds())
+		} else {
+			status = StatusSync
+			m.lastSync.Store(key, time.Now())
+			m.log.Debug("ensure repo complete (sync)", "repo", key, "sync_duration_ms", time.Since(syncStart).Milliseconds(), "total_duration_ms", time.Since(start).Milliseconds())
 
-		if m.maintainAfterSync {
-			m.scheduleOptimize(repoPath, false)
+			if m.maintainAfterSync {
+				m.scheduleOptimize(repoPath, false)
+			}
 		}
 
 		return repoPath, StatusSync, nil
+	} else {
+		m.log.Debug("ensure repo complete (hit)", "repo", key, "total_duration_ms", time.Since(start).Milliseconds())
 	}
 
 	// Repo is fresh - validate auth only for private repos (cache hit case)
-	if m.requiresAuth(repoPath) {
+	// If sync was successful, authentication validity is already guaranteed
+	if m.requiresAuth(repoPath) && status != StatusSync {
 		authStart := time.Now()
 		if err := m.validateAuth(ctx, upstreamURL, authHeader); err != nil {
 			m.log.Warn("auth validation failed", "repo", key, "err", err, "duration_ms", time.Since(authStart).Milliseconds())
@@ -147,9 +147,7 @@ func (m *Mirror) EnsureRepo(ctx context.Context, host, owner, repo, upstreamURL,
 		}
 		m.log.Debug("auth validation passed", "repo", key, "duration_ms", time.Since(authStart).Milliseconds())
 	}
-
-	m.log.Debug("ensure repo complete (hit)", "repo", key, "total_duration_ms", time.Since(start).Milliseconds())
-	return repoPath, StatusHit, nil
+	return repoPath, status, nil
 }
 
 // isStale returns true if the repo needs syncing.
@@ -336,7 +334,7 @@ func (m *Mirror) MaintainRepo(ctx context.Context, repoKey string, full bool) er
 }
 
 func (m *Mirror) Root() string {
-    return m.root
+	return m.root
 }
 
 // MaintainAll scans mirror root and runs maintenance on every *.git repo.
