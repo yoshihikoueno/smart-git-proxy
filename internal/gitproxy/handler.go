@@ -85,8 +85,12 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request, host, owner, rep
 	// Ensure mirror is synced
 	ensureStart := time.Now()
 	repoPath, status, err := s.mirror.EnsureRepo(r.Context(), host, owner, repo, upstreamURL, authHeader)
-	if err != nil {
+	if err != nil && authHeader != "" {
 		s.fail(w, repoKey, KindInfo, err)
+		return
+	} else if err != nil {
+		w.Header().Set("www-authenticate", "Basic realm=\"smart-git-proxy\"")
+		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 	s.log.Debug("ensure repo done", "repo", repoKey, "status", status, "duration_ms", time.Since(ensureStart).Milliseconds())
