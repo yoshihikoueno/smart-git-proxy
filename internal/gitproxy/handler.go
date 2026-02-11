@@ -16,8 +16,6 @@ import (
 
 	"log/slog"
 
-	"golang.org/x/sync/singleflight"
-
 	"github.com/crohr/smart-git-proxy/internal/config"
 	"github.com/crohr/smart-git-proxy/internal/metrics"
 	"github.com/crohr/smart-git-proxy/internal/mirror"
@@ -41,10 +39,6 @@ type Server struct {
 
 	// Track last cache status per repo for display in upload-pack
 	statusCache sync.Map // map[repoKey]mirror.Status
-
-	// Cache for depth=1/no-have packs keyed by repo/want/hash-of-request
-	packCache      sync.Map // map[string]*packEntry
-	packCacheGroup singleflight.Group
 }
 
 func New(cfg *config.Config, m *mirror.Mirror, log *slog.Logger, metrics *metrics.Metrics) *Server {
