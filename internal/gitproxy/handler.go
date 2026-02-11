@@ -11,7 +11,6 @@ import (
 	"path"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"log/slog"
@@ -36,9 +35,6 @@ type Server struct {
 	mirror  *mirror.Mirror
 	log     *slog.Logger
 	metrics *metrics.Metrics
-
-	// Track last cache status per repo for display in upload-pack
-	statusCache sync.Map // map[repoKey]mirror.Status
 }
 
 func New(cfg *config.Config, m *mirror.Mirror, log *slog.Logger, metrics *metrics.Metrics) *Server {
@@ -94,9 +90,6 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request, host, owner, rep
 		return
 	}
 	s.log.Debug("ensure repo done", "repo", repoKey, "status", status, "duration_ms", time.Since(ensureStart).Milliseconds())
-
-	// Store status for the upcoming upload-pack request
-	s.statusCache.Store(repoKey, status)
 	s.log.Info("request", "repo", repoKey, "status", status)
 
 	// Serve refs from local mirror
