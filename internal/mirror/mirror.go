@@ -2,8 +2,11 @@ package mirror
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -131,8 +134,6 @@ func (m *Mirror) EnsureRepo(ctx context.Context, host, owner, repo, upstreamURL,
 				m.scheduleOptimize(repoPath, false)
 			}
 		}
-
-		return repoPath, StatusSync, nil
 	} else {
 		m.log.Debug("ensure repo complete (hit)", "repo", key, "total_duration_ms", time.Since(start).Milliseconds())
 	}
@@ -173,17 +174,34 @@ func (m *Mirror) markRequiresAuth(repoPath string) error {
 // validateAuth validates the auth token can access the upstream repo using git ls-remote.
 func (m *Mirror) validateAuth(ctx context.Context, upstreamURL, authHeader string) error {
 	start := time.Now()
-	args := []string{"ls-remote", "--exit-code", "-q", upstreamURL, "HEAD"}
-
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = gitEnv(authHeader)
-
-	output, err := cmd.CombinedOutput()
+	parsedUrl, err := url.Parse(upstreamURL)
 	if err != nil {
-		m.log.Debug("auth validation failed", "duration_ms", time.Since(start).Milliseconds(), "upstream", upstreamURL)
-		return fmt.Errorf("git ls-remote failed: %w\noutput: %s", err, output)
+		m.log.Error("auth validation failed", "duration_ms", time.Since(start).Milliseconds(), "upstream", upstreamURL)
+		return fmt.Errorf("Failed to parse upstreamURL: %s", err)
 	}
-	m.log.Debug("auth validation complete", "duration_ms", time.Since(start).Milliseconds(), "upstream", upstreamURL)
+	parsedUrl = parsedUrl.JoinPath("info", "refs")
+	parsedUrl.Query().Set("service", "git-upload-pack")
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+	req, err := http.NewRequest("GET", parsedUrl.String(), nil)
+	if err != nil {
+		m.log.Error("auth validation failed during req setup", "error", err)
+		return err
+	}
+	req.Header.Add("Authorization", authHeader)
+	res, err := client.Do(req)
+
+	if err != nil {
+		// When failed to auhenticate due to upstream outage, proceed the process assuming that the auth info is valid
+		m.log.Warn("auth validation failed due to upstream outage", "duration_ms", time.Since(start).Milliseconds(), "upstream", upstreamURL, "error", err)
+	} else if res.StatusCode == http.StatusUnauthorized {
+		m.log.Error("auth validation failed", "duration_ms", time.Since(start).Milliseconds(), "upstream", upstreamURL)
+		return fmt.Errorf("git ls-remote failed")
+	} else {
+		m.log.Debug("auth validation complete", "duration_ms", time.Since(start).Milliseconds(), "upstream", upstreamURL)
+	}
 	return nil
 }
 
