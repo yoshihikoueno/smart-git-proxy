@@ -3,6 +3,7 @@ package mirror
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -26,6 +27,38 @@ const (
 	StatusClone Status = "mirror-clone" // Had to clone new mirror
 	StatusSync  Status = "mirror-sync"  // Had to sync stale mirror
 )
+
+type RepoRelPath struct {
+	Host  string
+	Owner string
+	Repo  []string
+}
+
+func ParseRepoRelPath(relPath string) (*RepoRelPath, error) {
+	parts := strings.SplitN(relPath, "/", 3)
+	if len(parts) < 3 {
+		return nil, errors.New("invalid path")
+	}
+	return &RepoRelPath{
+		Host:  parts[0],
+		Owner: parts[1],
+		Repo:  strings.Split(parts[2], "/"),
+	}, nil
+}
+
+func (r *RepoRelPath) String() string {
+	repoJoined := filepath.Join(r.Repo...)
+	return filepath.Join(r.Host, r.Owner, repoJoined)
+}
+
+func (r *RepoRelPath) Describe() string {
+	return fmt.Sprintf(
+		"host: %s, owner: %s, repo: %s",
+		r.Host,
+		r.Owner,
+		r.Repo,
+	)
+}
 
 // Mirror manages bare git repository mirrors.
 type Mirror struct {
@@ -59,17 +92,17 @@ func New(root string, staleAfter time.Duration, maxSize config.SizeSpec, packThr
 }
 
 // RepoPath returns the filesystem path for a repo mirror.
-func (m *Mirror) RepoPath(host, owner, repo string) string {
-	return filepath.Join(m.root, host, owner, repo+".git")
+func (m *Mirror) RepoPath(repoRelPath *RepoRelPath) string {
+	return filepath.Join(m.root, repoRelPath.String()+".git")
 }
 
 // EnsureRepo ensures the mirror exists and is synced.
 // authHeader is the Authorization header value from the client request (can be empty).
 // Returns the path to the bare repo and the cache status.
-func (m *Mirror) EnsureRepo(ctx context.Context, host, owner, repo, upstreamURL, authHeader string) (string, Status, error) {
+func (m *Mirror) EnsureRepo(ctx context.Context, repoRelPath *RepoRelPath, upstreamURL, authHeader string) (string, Status, error) {
 	start := time.Now()
-	repoPath := m.RepoPath(host, owner, repo)
-	key := fmt.Sprintf("%s/%s/%s", host, owner, repo)
+	repoPath := m.RepoPath(repoRelPath)
+	key := repoRelPath.String()
 
 	m.log.Debug("ensure repo started", "repo", key)
 
@@ -330,25 +363,24 @@ func (m *Mirror) syncRepo(ctx context.Context, repoPath, upstreamURL, authHeader
 }
 
 // GetRepoLock returns a mutex for the given repo (for exclusive operations).
-func (m *Mirror) GetRepoLock(host, owner, repo string) *sync.Mutex {
-	key := fmt.Sprintf("%s/%s/%s", host, owner, repo)
-	lock, _ := m.repoLocks.LoadOrStore(key, &sync.Mutex{})
+func (m *Mirror) GetRepoLock(repoRelPath *RepoRelPath) *sync.Mutex {
+	lock, _ := m.repoLocks.LoadOrStore(repoRelPath.String(), &sync.Mutex{})
 	return lock.(*sync.Mutex)
 }
 
 // MaintainRepo runs maintenance on a given repo key (host/owner/repo).
 // If full is true, perform a repack with bitmap; otherwise only midx+commit-graph.
-func (m *Mirror) MaintainRepo(ctx context.Context, repoKey string, full bool) error {
-	parts := strings.Split(repoKey, "/")
-	if len(parts) < 3 {
-		return fmt.Errorf("invalid repo key %q, expected host/owner/repo", repoKey)
+func (m *Mirror) MaintainRepo(ctx context.Context, repoKey string, full bool) (err error) {
+	var relPath *RepoRelPath
+	if relPath, err = ParseRepoRelPath(repoKey); err != nil {
+		return
 	}
-	repoPath := m.RepoPath(parts[0], parts[1], parts[2])
+	repoPath := m.RepoPath(relPath)
 	if _, err := os.Stat(repoPath); err != nil {
 		return fmt.Errorf("repo not found at %s: %w", repoPath, err)
 	}
 	m.optimizeRepo(ctx, repoPath, full)
-	return nil
+	return
 }
 
 func (m *Mirror) Root() string {

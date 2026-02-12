@@ -8,7 +8,6 @@ import (
 	"net/http/cgi"
 	"net/url"
 	"os/exec"
-	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -46,29 +45,29 @@ func (s *Server) Handler() http.Handler {
 		start := time.Now()
 		s.log.Debug("incoming request", "method", r.Method, "path", r.URL.Path, "query", r.URL.RawQuery)
 
-		host, owner, repo, kind, err := s.resolveTarget(r)
+		repoRelPath, kind, err := s.resolveTarget(r)
 		if err != nil {
 			s.log.Error("resolve target failed", "err", err, "path", r.URL.Path)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		repoKey := fmt.Sprintf("%s/%s/%s", host, owner, repo)
-		s.log.Debug("resolved target", "host", host, "owner", owner, "repo", repo, "kind", kind)
+		repoKey := repoRelPath.String()
+		s.log.Debug("resolved target", "repo", repoRelPath.Describe(), "kind", kind)
 		s.metrics.RequestsTotal.WithLabelValues(repoKey, string(kind), r.RemoteAddr).Inc()
 
 		switch kind {
 		case KindReceivePack:
 			http.Error(w, "write operation is not supported", http.StatusBadRequest)
 		default:
-			s.handle(w, r, host, owner, repo, repoKey, start)
+			s.handle(w, r, repoRelPath, repoKey, start)
 		}
 	})
 }
 
-func (s *Server) handle(w http.ResponseWriter, r *http.Request, host, owner, repo, repoKey string, start time.Time) {
+func (s *Server) handle(w http.ResponseWriter, r *http.Request, repoRelPath *mirror.RepoRelPath, repoKey string, start time.Time) {
 	// Build upstream URL for cloning/syncing
-	upstreamURL := fmt.Sprintf("https://%s/%s/%s.git", host, owner, repo)
+	upstreamURL := fmt.Sprintf("https://%s.git", repoRelPath)
 
 	// Determine auth for upstream sync
 	authHeader := ""
@@ -84,7 +83,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request, host, owner, rep
 
 	// Ensure mirror is synced
 	ensureStart := time.Now()
-	repoPath, status, err := s.mirror.EnsureRepo(r.Context(), host, owner, repo, upstreamURL, authHeader)
+	repoPath, status, err := s.mirror.EnsureRepo(r.Context(), repoRelPath, upstreamURL, authHeader)
 	if err != nil && authHeader != "" {
 		s.fail(w, repoKey, KindInfo, err)
 		return
@@ -121,17 +120,17 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request, host, owner, rep
 	s.log.Debug("info/refs complete", "repo", repoKey, "total_duration_ms", time.Since(start).Milliseconds())
 }
 
-func (s *Server) resolveTarget(r *http.Request) (host, owner, repo string, kind Kind, err error) {
+func (s *Server) resolveTarget(r *http.Request) (repoRelPath *mirror.RepoRelPath, kind Kind, err error) {
 	// Path format: /{host}/{owner}/{repo}/info/refs or /{host}/{owner}/{repo}/git-upload-pack
 	pathStr := strings.TrimPrefix(r.URL.Path, "/")
 	if pathStr == "" {
-		return "", "", "", "", errors.New("empty path")
+		return nil, "", errors.New("empty path")
 	}
 
 	// Parse the path to extract components
 	u, err := url.Parse("https://placeholder/" + pathStr)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("invalid path: %w", err)
+		return nil, "", fmt.Errorf("invalid path: %w", err)
 	}
 
 	// Determine kind from suffix
@@ -152,34 +151,24 @@ func (s *Server) resolveTarget(r *http.Request) (host, owner, repo string, kind 
 	repoPath = re.ReplaceAllLiteralString(repoPath, "")
 	repoPath = strings.TrimSuffix(repoPath, ".git")
 
-	// Split into host/owner/repo
-	parts := strings.SplitN(repoPath, "/", 3)
-	if len(parts) < 3 {
-		return "", "", "", "", errors.New("invalid path: expected /{host}/{owner}/{repo}/...")
-	}
-	host = parts[0]
-	owner = parts[1]
-	repo = parts[2]
-
-	// Handle nested paths (e.g., owner/repo/subgroup)
-	if strings.Contains(repo, "/") {
-		// For GitLab-style nested groups, combine them
-		repo = path.Base(repo)
+	repoRelPath, err = mirror.ParseRepoRelPath(repoPath)
+	if err != nil {
+		return nil, "", err
 	}
 
 	// Validate against allowed upstreams
 	allowed := false
 	for _, h := range s.cfg.AllowedUpstreams {
-		if h == host {
+		if h == repoRelPath.Host {
 			allowed = true
 			break
 		}
 	}
 	if !allowed {
-		return "", "", "", "", fmt.Errorf("upstream %q not in allowed list", host)
+		return nil, "", fmt.Errorf("upstream %q not in allowed list", repoRelPath.Host)
 	}
 
-	return host, owner, repo, kind, nil
+	return repoRelPath, kind, nil
 }
 
 func (s *Server) fail(w http.ResponseWriter, repo string, kind Kind, err error) {
