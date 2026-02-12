@@ -2,6 +2,8 @@ package mirror
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"github.com/crohr/smart-git-proxy/internal/config"
+	"github.com/hashicorp/go-set/v3"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -187,13 +190,90 @@ func (m *Mirror) validateAuth(ctx context.Context, upstreamURL, authHeader strin
 	if err != nil {
 		// When failed to auhenticate due to upstream outage, proceed the process assuming that the auth info is valid
 		m.log.Warn("auth validation failed due to upstream outage", "duration_ms", time.Since(start).Milliseconds(), "upstream", upstreamURL)
+		if ok, err := m.checkAuthCache(authHeader); err != nil {
+			return fmt.Errorf("auth cache not available: %s", err)
+		} else if ok {
+			m.log.Info("authenticated using auth cache")
+		} else {
+			return fmt.Errorf("Failed to authenticate using auth cache: %s", err)
+		}
 	} else if res.StatusCode == http.StatusUnauthorized {
 		m.log.Error("auth validation failed", "duration_ms", time.Since(start).Milliseconds(), "upstream", upstreamURL)
+		m.removeAuthCache(authHeader)
 		return fmt.Errorf("git ls-remote failed: %w\n", err)
 	} else {
+		m.addAuthCache(authHeader)
 		m.log.Debug("auth validation complete", "duration_ms", time.Since(start).Milliseconds(), "upstream", upstreamURL)
 	}
 	return nil
+}
+
+func (m *Mirror) addAuthCache(authHeader string) error {
+	var s *set.Set[[20]byte]
+	var err error
+	if s, err = m.getAuthCache(); err != nil {
+		m.log.Debug("get auth cache failed")
+		s = set.New[[20]byte](1)
+	}
+	s.Insert(sha1.Sum([]byte(authHeader)))
+	return m.storeAuthCache(s)
+}
+
+func (m *Mirror) checkAuthCache(authHeader string) (bool, error) {
+	var s *set.Set[[20]byte]
+	var err error
+	if s, err = m.getAuthCache(); err != nil {
+		m.log.Warn("auth cache retrieval failed")
+		return false, err
+	}
+	return s.Contains(sha1.Sum([]byte(authHeader))), nil
+}
+
+func (m *Mirror) removeAuthCache(authHeader string) error {
+	var s *set.Set[[20]byte]
+	var err error
+	if s, err = m.getAuthCache(); err != nil {
+		m.log.Warn("auth cache retrieval failed")
+		return err
+	}
+	s.Remove(sha1.Sum([]byte(authHeader)))
+	return m.storeAuthCache(s)
+}
+
+func (m *Mirror) storeAuthCache(s *set.Set[[20]byte]) error {
+	if blob, err := json.Marshal(s); err != nil {
+		m.log.Warn("auth cache marshal failed")
+		return err
+	} else {
+		path := filepath.Join(m.root, ".auth-cace.json")
+		return os.WriteFile(path, blob, 0o600)
+	}
+}
+
+func (m *Mirror) getAuthCache() (*set.Set[[20]byte], error) {
+	path := filepath.Join(m.root, ".auth-cace.json")
+	var blob []byte
+	var err error
+	s := set.New[[20]byte](1)
+	if blob, err = os.ReadFile(path); err != nil {
+		m.log.Warn("auth cache retrieval failed")
+		return nil, err
+	}
+
+	if err := s.UnmarshalJSON(blob); err != nil {
+		m.log.Warn("auth cache unmarshal failed")
+		return nil, err
+	}
+	return s, nil
+}
+
+func (m *Mirror) validateAuthUsingCache(authHeader string) (bool, error) {
+	if s, err := m.getAuthCache(); err != nil {
+		m.log.Warn("auth cache retrieval failed")
+		return false, err
+	} else {
+		return s.Contains(sha1.Sum([]byte(authHeader))), nil
+	}
 }
 
 // cloneRepo creates a new bare mirror.

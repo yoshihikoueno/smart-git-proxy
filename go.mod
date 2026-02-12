@@ -11,6 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.48.1
 	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.39.19
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.58.1
+	github.com/hashicorp/go-set/v3 v3.0.1
 	github.com/prometheus/client_golang v1.23.2
 	golang.org/x/sync v0.18.0
 )
